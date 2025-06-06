@@ -1,0 +1,93 @@
+# Scheduler Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduler-service
+  namespace: crypto-mixer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scheduler-service
+  template:
+    metadata:
+      labels:
+        app: scheduler-service
+    spec:
+      containers:
+      - name: scheduler-service
+        image: crypto-mixer/scheduler-service:latest
+        ports:
+        - containerPort: 3002
+        envFrom:
+        - configMapRef:
+            name: mixer-config
+        - secretRef:
+            name: mixer-secrets
+        env:
+        - name: PORT
+          value: "3002"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Scheduler Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: scheduler-service
+  namespace: crypto-mixer
+spec:
+  selector:
+    app: scheduler-service
+  ports:
+  - port: 3002
+    targetPort: 3002
+
+---
+# CronJob for periodic cleanup
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cleanup-job
+  namespace: crypto-mixer
+spec:
+  schedule: "0 2 * * *"  # Run at 2 AM daily
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: cleanup
+            image: crypto-mixer/scheduler-service:latest
+            command: ["node", "scripts/cleanup.js"]
+            envFrom:
+            - configMapRef:
+                name: mixer-config
+            - secretRef:
+                name: mixer-secrets
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+          restartPolicy: OnFailure

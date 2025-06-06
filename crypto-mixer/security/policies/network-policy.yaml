@@ -1,0 +1,85 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: crypto-mixer-network-policy
+  namespace: crypto-mixer
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow traffic from gateway to services
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: crypto-mixer
+    - podSelector:
+        matchLabels:
+          app: kong
+    ports:
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 3001
+    - protocol: TCP
+      port: 3003
+    - protocol: TCP
+      port: 3004
+
+  # Allow inter-service communication
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+    - protocol: TCP
+      port: 6379  # Redis
+    - protocol: TCP
+      port: 5672  # RabbitMQ
+
+  # Allow monitoring
+  - from:
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 9090
+
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+
+  # Allow HTTPS to external APIs
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+  # Allow internal service communication
+  - to:
+    - podSelector:
+        matchLabels:
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 5432
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 5672
+
+  # Allow blockchain RPC
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 8332  # Bitcoin RPC
+    - protocol: TCP
+      port: 8545  # Ethereum RPC

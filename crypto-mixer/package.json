@@ -1,0 +1,70 @@
+{
+  "name": "crypto-mixer",
+  "version": "1.0.0",
+  "description": "Cryptocurrency transaction aggregation and analysis platform",
+  "private": true,
+  "workspaces": [
+    "services/mixer-api",
+    "services/blockchain-service",
+    "frontend",
+    "admin-dashboard",
+    "backend"
+  ],
+  "scripts": {
+    "install:all": "npm install && npm run install:services && npm run install:frontend",
+    "install:services": "cd services/mixer-api && npm install && cd ../blockchain-service && npm install",
+    "install:frontend": "cd frontend && npm install && cd ../admin-dashboard && npm install",
+    "install:backend": "cd backend && npm install",
+    "build": "npm run build:services && npm run build:frontend",
+    "build:services": "cd services/mixer-api && npm run build && cd ../blockchain-service && npm run build",
+    "build:frontend": "cd frontend && npm run build && cd ../admin-dashboard && npm run build",
+    "start": "docker-compose up -d",
+    "start:dev": "docker-compose -f docker-compose.dev.yml up -d",
+    "stop": "docker-compose down",
+    "dev:mixer-api": "cd services/mixer-api && npm run dev",
+    "dev:blockchain": "cd services/blockchain-service && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:admin": "cd admin-dashboard && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "test": "npm run test:services",
+    "test:services": "cd services/mixer-api && npm test && cd ../blockchain-service && npm test",
+    "lint": "npm run lint:services",
+    "lint:services": "cd services/mixer-api && npm run lint && cd ../blockchain-service && npm run lint",
+    "lint:fix": "npm run lint:services:fix",
+    "lint:services:fix": "cd services/mixer-api && npm run lint:fix && cd ../blockchain-service && npm run lint:fix",
+    "clean": "npm run clean:dist && npm run clean:deps",
+    "clean:dist": "rm -rf services/*/dist",
+    "clean:deps": "rm -rf node_modules services/*/node_modules frontend/node_modules admin-dashboard/node_modules backend/node_modules",
+    "setup": "npm run install:all && npm run build",
+    "db:migrate": "cd scripts && ./setup-database.sh",
+    "db:seed": "cd scripts && ./seed-database.sh",
+    "logs": "docker-compose logs -f",
+    "logs:mixer": "docker-compose logs -f mixer-api",
+    "logs:blockchain": "docker-compose logs -f blockchain-service",
+    "backup": "cd scripts && ./backup.sh",
+    "deploy": "cd scripts && ./deploy.sh"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "author": "Crypto Mixer Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/crypto-mixer/crypto-mixer.git"
+  },
+  "keywords": [
+    "cryptocurrency",
+    "blockchain",
+    "transaction-analysis",
+    "bitcoin",
+    "ethereum",
+    "solana",
+    "tron"
+  ]
+}

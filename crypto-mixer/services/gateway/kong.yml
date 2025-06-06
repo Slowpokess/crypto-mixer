@@ -1,0 +1,91 @@
+_format_version: "3.0"
+_transform: true
+
+services:
+  - name: mixer-api
+    url: http://mixer-api:3000
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 100
+          hour: 1000
+          policy: cluster
+      - name: cors
+        config:
+          origins:
+            - "*"
+          methods:
+            - GET
+            - POST
+            - OPTIONS
+          headers:
+            - Accept
+            - Content-Type
+            - Authorization
+            - X-Session-ID
+          credentials: true
+      - name: key-auth
+        config:
+          key_names:
+            - apikey
+          run_on_preflight: false
+    routes:
+      - name: mixer-api-routes
+        paths:
+          - /api/v1/mixer
+
+  - name: blockchain-service
+    url: http://blockchain-service:3001
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 200
+          hour: 2000
+          policy: cluster
+      - name: key-auth
+        config:
+          key_names:
+            - apikey
+    routes:
+      - name: blockchain-routes
+        paths:
+          - /api/v1/blockchain
+
+  - name: admin-dashboard
+    url: http://admin-dashboard:3002
+    plugins:
+      - name: basic-auth
+        config: {}
+      - name: ip-restriction
+        config:
+          allow:
+            - 10.0.0.0/8
+            - 192.168.0.0/16
+            - 172.16.0.0/12
+    routes:
+      - name: admin-routes
+        paths:
+          - /admin
+
+consumers:
+  - username: mixer-frontend
+    keyauth_credentials:
+      - key: ${FRONTEND_API_KEY}
+  - username: admin-user
+    basicauth_credentials:
+      - username: admin
+        password: ${ADMIN_PASSWORD}
+
+plugins:
+  - name: prometheus
+    config:
+      per_consumer: true
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 10
+  - name: response-transformer
+    config:
+      remove:
+        headers:
+          - "Server"
+          - "X-Powered-By"

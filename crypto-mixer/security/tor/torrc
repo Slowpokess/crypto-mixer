@@ -1,0 +1,112 @@
+# security/tor/torrc
+# Tor Configuration for Crypto Mixer
+
+# Basic Tor configuration
+SocksPort 0.0.0.0:9050 IsolateDestAddr IsolateDestPort
+ControlPort 0.0.0.0:9051
+HashedControlPassword 16:872860B76453A77D60CA2BB8C1A7042072093276A3D701AD684053EC4C
+
+# Hidden service configuration
+HiddenServiceDir /var/lib/tor/mixer_service/
+HiddenServicePort 80 nginx:8080
+HiddenServicePort 443 nginx:8080
+
+# Directory authorities
+DirReqStatistics 0
+DirRecordUsageStats 0
+
+# Logging
+Log notice stdout
+Log info file /var/log/tor/tor.log
+
+# Security settings
+CookieAuthentication 1
+CookieAuthFileGroupReadable 1
+DataDirectory /var/lib/tor
+
+# Performance settings
+MaxMemInQueues 512 MB
+NumCPUs 2
+
+# Circuit building
+CircuitBuildTimeout 60
+LearnCircuitBuildTimeout 0
+MaxCircuitDirtiness 600
+
+# Stream isolation
+IsolateClientAuth 1
+IsolateClientProtocol 1
+IsolateDestAddr 1
+IsolateDestPort 1
+
+# Security hardening
+DisableAllSwap 1
+HardwareAccel 1
+SafeLogging 1
+AvoidDiskWrites 1
+
+# Bandwidth limits (adjust as needed)
+BandwidthRate 1 MB
+BandwidthBurst 2 MB
+
+# Entry/Exit policies
+ExitPolicy reject *:*
+ExitRelay 0
+
+# Bridge settings (if needed)
+UseBridges 0
+ClientTransportPlugin obfs4 exec /usr/bin/obfs4proxy
+
+# Network settings
+DNSPort 5353
+AutomapHostsOnResolve 1
+VirtualAddrNetworkIPv4 10.192.0.0/10
+
+# Connection settings
+ConnectionPadding 1
+ReducedConnectionPadding 0
+
+# Circuit settings
+EnforceDistinctSubnets 1
+ExtendAllowPrivateAddresses 1
+
+# Consensus and authority settings
+FetchDirInfoEarly 1
+FetchDirInfoExtraEarly 1
+FetchHidServDescriptors 1
+FetchServerDescriptors 1
+FetchUselessDescriptors 0
+
+# Hidden service settings
+HiddenServiceNonAnonymousMode 0
+HiddenServiceSingleHopMode 0
+HiddenServiceStatistics 0
+
+# Security policies
+SafeSocks 1
+TestSocks 1
+WarnUnsafeSocks 1
+
+# Prevent DNS leaks
+DNSListenAddress 0.0.0.0:5353
+AutomapHostsSuffixes .onion,.exit
+
+# Disable dangerous features
+DisableDebuggerAttachment 1
+
+# Tor2web mode (disabled for security)
+Tor2webMode 0
+Tor2webRendezvousPoints 0
+
+# Client configuration
+ClientOnly 1
+SocksPolicy accept 10.0.0.0/8
+SocksPolicy accept 172.16.0.0/12  
+SocksPolicy accept 192.168.0.0/16
+SocksPolicy accept 127.0.0.0/8
+SocksPolicy reject *
+
+# Advanced security
+ConstrainedSockets 1
+ConstrainedSockSize 8192
+DisableAllSwap 1
