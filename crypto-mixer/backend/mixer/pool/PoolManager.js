@@ -260,6 +260,148 @@ class PoolManager extends EventEmitter {
   }
 
   /**
+   * Получает текущий статус менеджера пулов
+   */
+  getStatus() {
+    const totalPools = this.pools.size;
+    const activePools = Array.from(this.pools.values()).filter(pool => pool.length > 0).length;
+    
+    return {
+      isMonitoring: this.isMonitoring,
+      totalPools,
+      activePools,
+      utilizationRate: totalPools > 0 ? Math.round((activePools / totalPools) * 100) : 0
+    };
+  }
+
+  /**
+   * Выполняет проверку состояния менеджера пулов
+   */
+  async healthCheck() {
+    const health = {
+      status: 'healthy',
+      timestamp: new Date(),
+      checks: {
+        monitoring: { status: 'pass', message: 'Мониторинг пулов работает' },
+        pools: { status: 'pass', message: 'Пулы функционируют нормально' },
+        liquidity: { status: 'pass', message: 'Ликвидность достаточна' },
+        performance: { status: 'pass', message: 'Производительность в норме' }
+      },
+      details: {
+        isMonitoring: this.isMonitoring,
+        totalPools: this.pools.size,
+        poolStats: {},
+        metrics: this.metrics,
+        averageUtilization: this.metrics.averagePoolUtilization
+      }
+    };
+
+    try {
+      // Проверяем состояние мониторинга
+      if (!this.isMonitoring) {
+        health.checks.monitoring = { status: 'fail', message: 'Мониторинг пулов не запущен' };
+        health.status = 'unhealthy';
+      }
+
+      // Проверяем состояние каждого пула
+      let depletedPools = 0;
+      let overflowPools = 0;
+      let healthyPools = 0;
+      
+      for (const [currency, pool] of this.pools) {
+        const status = this._getPoolStatus(currency);
+        const utilization = this._calculatePoolUtilization(currency);
+        
+        health.details.poolStats[currency] = {
+          status,
+          size: pool.totalAmount,
+          participants: pool.participantsCount,
+          utilization: Math.round(utilization)
+        };
+        
+        if (status === 'DEPLETED') {
+          depletedPools++;
+        } else if (status === 'OVERFLOW') {
+          overflowPools++;
+        } else if (status === 'HEALTHY') {
+          healthyPools++;
+        }
+      }
+      
+      // Оценка состояния пулов
+      if (depletedPools > this.pools.size * 0.3) {
+        health.checks.pools = { 
+          status: 'warn', 
+          message: `Много истощенных пулов: ${depletedPools}/${this.pools.size}` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+      
+      if (overflowPools > 0) {
+        health.checks.pools = { 
+          status: 'warn', 
+          message: `Переполненные пулы: ${overflowPools}` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем общую ликвидность
+      if (healthyPools === 0 && this.pools.size > 0) {
+        health.checks.liquidity = { status: 'fail', message: 'Отсутствуют здоровые пулы' };
+        health.status = 'unhealthy';
+      }
+
+      // Проверяем очереди миксирования
+      let totalQueued = 0;
+      for (const [currency, queue] of this.mixingQueues) {
+        totalQueued += queue.length;
+      }
+      
+      if (totalQueued > 50) {
+        health.checks.performance = { 
+          status: 'warn', 
+          message: `Большая очередь миксирования: ${totalQueued}` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем доступность БД
+      if (this.database) {
+        try {
+          await this.database.query('SELECT 1');
+        } catch (error) {
+          health.checks.pools = { status: 'fail', message: `Ошибка доступа к БД: ${error.message}` };
+          health.status = 'unhealthy';
+        }
+      }
+
+      // Проверяем среднюю утилизацию
+      if (this.metrics.averagePoolUtilization < 20 && this.metrics.totalTransactions > 0) {
+        health.checks.performance = { 
+          status: 'warn', 
+          message: `Низкая утилизация пулов: ${Math.round(this.metrics.averagePoolUtilization)}%` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+    } catch (error) {
+      health.status = 'unhealthy';
+      health.error = error.message;
+      this.logger?.error('Ошибка проверки состояния менеджера пулов:', error);
+    }
+
+    return health;
+  }
+
+  /**
    * Получает статистику пула
    */
   getPoolStatistics(currency = null) {

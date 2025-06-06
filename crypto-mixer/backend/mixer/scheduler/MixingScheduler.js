@@ -428,6 +428,121 @@ class MixingScheduler extends EventEmitter {
   /**
    * Получает статистику планировщика
    */
+  /**
+   * Получает текущий статус планировщика
+   */
+  getStatus() {
+    return {
+      isRunning: this.state.isRunning,
+      scheduledOperations: this.state.scheduledOperations.size,
+      activeOperations: this.state.activeOperations.size,
+      queueLength: this.state.operationQueue.length,
+      successRate: this.state.statistics.successRate
+    };
+  }
+
+  /**
+   * Выполняет проверку состояния планировщика
+   */
+  async healthCheck() {
+    const health = {
+      status: 'healthy',
+      timestamp: new Date(),
+      checks: {
+        scheduler: { status: 'pass', message: 'Планировщик работает нормально' },
+        operations: { status: 'pass', message: 'Операции выполняются стабильно' },
+        queue: { status: 'pass', message: 'Очередь обрабатывается нормально' },
+        performance: { status: 'pass', message: 'Производительность в норме' }
+      },
+      details: {
+        isRunning: this.state.isRunning,
+        scheduledOperations: this.state.scheduledOperations.size,
+        activeOperations: this.state.activeOperations.size,
+        queueLength: this.state.operationQueue.length,
+        statistics: this.state.statistics,
+        timersActive: this.timers.size
+      }
+    };
+
+    try {
+      // Проверяем состояние планировщика
+      if (!this.state.isRunning) {
+        health.checks.scheduler = { status: 'fail', message: 'Планировщик не запущен' };
+        health.status = 'unhealthy';
+      }
+
+      // Проверяем переполнение очереди
+      if (this.state.operationQueue.length > 100) {
+        health.checks.queue = { 
+          status: 'warn', 
+          message: `Очередь переполнена: ${this.state.operationQueue.length} операций` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем количество активных операций
+      if (this.state.activeOperations.size >= this.config.maxConcurrentOperations * 0.9) {
+        health.checks.operations = { 
+          status: 'warn', 
+          message: `Высокая нагрузка: ${this.state.activeOperations.size}/${this.config.maxConcurrentOperations}` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем процент успеха
+      if (this.state.statistics.successRate < 80 && this.state.statistics.totalExecuted > 10) {
+        health.checks.performance = { 
+          status: 'warn', 
+          message: `Низкий процент успеха: ${this.state.statistics.successRate}%` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем доступность БД
+      if (this.database) {
+        try {
+          await this.database.query('SELECT 1');
+        } catch (error) {
+          health.checks.scheduler = { status: 'fail', message: `Ошибка доступа к БД: ${error.message}` };
+          health.status = 'unhealthy';
+        }
+      }
+
+      // Проверяем зависшие операции
+      const now = Date.now();
+      let stuckOperations = 0;
+      for (const [operationId, operation] of this.state.activeOperations) {
+        const elapsed = now - new Date(operation.startedAt).getTime();
+        if (elapsed > 60 * 60 * 1000) { // более часа
+          stuckOperations++;
+        }
+      }
+      
+      if (stuckOperations > 0) {
+        health.checks.operations = { 
+          status: 'warn', 
+          message: `Обнаружено ${stuckOperations} зависших операций` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+    } catch (error) {
+      health.status = 'unhealthy';
+      health.error = error.message;
+      this.logger?.error('Ошибка проверки состояния планировщика:', error);
+    }
+
+    return health;
+  }
+
   getStatistics() {
     const stats = {
       ...this.state.statistics,

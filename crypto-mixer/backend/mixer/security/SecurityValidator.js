@@ -91,7 +91,7 @@ class SecurityValidator extends EventEmitter {
    */
   async validateMixRequest(mixRequest) {
     try {
-      const { id, currency, amount, inputAddresses, outputAddresses, userId } = mixRequest;
+      const { id, currency, amount, inputAddresses, inputAddress, outputAddresses, userId } = mixRequest;
       
       this.logger?.info('Валидация запроса на микширование', {
         mixId: id,
@@ -418,6 +418,96 @@ class SecurityValidator extends EventEmitter {
   }
 
   /**
+   * Получает текущий статус системы безопасности
+   */
+  getStatus() {
+    return {
+      isInitialized: this.isInitialized || false,
+      blacklistedAddresses: this.state.blacklistedAddresses?.size || 0,
+      checkedTransactions: this.state.checkedTransactions || 0,
+      blockedTransactions: this.state.blockedTransactions || 0
+    };
+  }
+
+  /**
+   * Выполняет проверку состояния системы безопасности
+   */
+  async healthCheck() {
+    const health = {
+      status: 'healthy',
+      timestamp: new Date(),
+      checks: {
+        initialization: { status: 'pass', message: 'Система безопасности инициализирована' },
+        blacklist: { status: 'pass', message: 'Blacklist загружен и функционирует' },
+        validation: { status: 'pass', message: 'Валидация работает корректно' },
+        kyt: { status: 'pass', message: 'KYT анализ доступен' }
+      },
+      details: {
+        blacklistedAddresses: this.blacklistedAddresses.size,
+        whitelistedAddresses: this.whitelistedAddresses.size,
+        kytEnabled: this.config.kytSettings.enabled,
+        sanctionsCheckEnabled: this.config.addressValidation.checkSanctions,
+        metrics: this.securityMetrics
+      }
+    };
+
+    try {
+      // Проверяем инициализацию
+      if (this.blacklistedAddresses.size === 0 && this.whitelistedAddresses.size === 0) {
+        health.checks.initialization = { status: 'warn', message: 'Списки адресов не загружены' };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем доступность базы данных
+      if (this.database) {
+        try {
+          await this.database.query('SELECT 1');
+        } catch (error) {
+          health.checks.validation = { status: 'fail', message: `Ошибка доступа к БД: ${error.message}` };
+          health.status = 'unhealthy';
+        }
+      }
+
+      // Проверяем конфигурацию KYT
+      if (this.config.kytSettings.enabled && !this.config.kytSettings.riskScoreThreshold) {
+        health.checks.kyt = { status: 'warn', message: 'Неполная конфигурация KYT' };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем актуальность метрик
+      const metricsAge = Date.now() - new Date(this.securityMetrics.lastUpdate).getTime();
+      if (metricsAge > 24 * 60 * 60 * 1000) { // более 24 часов
+        health.checks.validation = { status: 'warn', message: 'Метрики безопасности устарели' };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем высокий уровень отклонений
+      if (this.securityMetrics.rejectedTransactions > this.securityMetrics.totalValidations * 0.5) {
+        health.checks.validation = { 
+          status: 'warn', 
+          message: `Высокий уровень отклонений: ${Math.round((this.securityMetrics.rejectedTransactions / this.securityMetrics.totalValidations) * 100)}%` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+    } catch (error) {
+      health.status = 'unhealthy';
+      health.error = error.message;
+      this.logger?.error('Ошибка проверки состояния системы безопасности:', error);
+    }
+
+    return health;
+  }
+
+  /**
    * Получает метрики безопасности
    */
   getSecurityMetrics() {
@@ -498,7 +588,7 @@ class SecurityValidator extends EventEmitter {
   // Приватные методы валидации
 
   async _validateBasicParameters(mixRequest, result) {
-    const { currency, amount, inputAddresses, outputAddresses } = mixRequest;
+    const { currency, amount, inputAddresses, inputAddress, outputAddresses } = mixRequest;
 
     // Проверяем валюту
     if (!this.config.maxTransactionLimits[currency]) {
@@ -512,8 +602,11 @@ class SecurityValidator extends EventEmitter {
       result.isValid = false;
     }
 
+    // Получение входных адресов с поддержкой обоих форматов
+    const addresses = inputAddresses || (inputAddress ? [inputAddress] : []);
+    
     // Проверяем адреса
-    if (!inputAddresses || inputAddresses.length === 0) {
+    if (!addresses || addresses.length === 0) {
       result.errors.push('Отсутствуют входящие адреса');
       result.isValid = false;
     }
@@ -557,8 +650,12 @@ class SecurityValidator extends EventEmitter {
   }
 
   async _validateAddresses(mixRequest, result) {
+    // Поддержка как inputAddress (единственный), так и inputAddresses (массив)
+    const inputAddresses = mixRequest.inputAddresses || 
+                          (mixRequest.inputAddress ? [mixRequest.inputAddress] : []);
+    
     const allAddresses = [
-      ...mixRequest.inputAddresses,
+      ...inputAddresses,
       ...mixRequest.outputAddresses.map(out => out.address)
     ];
 
@@ -640,8 +737,12 @@ class SecurityValidator extends EventEmitter {
       return;
     }
 
+    // Поддержка как inputAddress (единственный), так и inputAddresses (массив)
+    const inputAddresses = mixRequest.inputAddresses || 
+                          (mixRequest.inputAddress ? [mixRequest.inputAddress] : []);
+    
     const allAddresses = [
-      ...mixRequest.inputAddresses,
+      ...inputAddresses,
       ...mixRequest.outputAddresses.map(out => out.address)
     ];
 

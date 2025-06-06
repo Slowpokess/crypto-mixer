@@ -155,7 +155,7 @@ class MixingEngine extends EventEmitter {
       }
 
       // Проверяем безопасность
-      await this.security.checkMixRequest(mixRequest);
+      await this.security.validateMixRequest(mixRequest);
       
       // Создаем контекст микширования
       const mixContext = await this._createMixContext(mixRequest);
@@ -205,6 +205,154 @@ class MixingEngine extends EventEmitter {
       estimatedCompletion: mixContext.estimatedCompletion,
       participantsCount: mixContext.participants?.length || 0
     };
+  }
+
+  /**
+   * Получает текущий статус движка
+   */
+  getStatus() {
+    return {
+      isRunning: this.state.isRunning,
+      activeMixes: this.state.activeMixes.size,
+      queueLength: this.state.processingQueue.length,
+      successRate: this._calculateSuccessRate(),
+      uptime: (Date.now() - this.metrics.lastReset) / (1000 * 60 * 60) // в часах
+    };
+  }
+
+  /**
+   * Выполняет проверку состояния движка миксирования
+   */
+  async healthCheck() {
+    const health = {
+      status: 'healthy',
+      timestamp: new Date(),
+      checks: {
+        engine: { status: 'pass', message: 'Движок миксирования работает' },
+        dependencies: { status: 'pass', message: 'Все зависимости доступны' },
+        performance: { status: 'pass', message: 'Производительность в норме' },
+        capacity: { status: 'pass', message: 'Пропускная способность достаточна' }
+      },
+      details: {
+        isRunning: this.state.isRunning,
+        activeMixes: this.state.activeMixes.size,
+        queueLength: this.state.processingQueue.length,
+        statistics: this.state.statistics,
+        uptime: (Date.now() - this.metrics.lastReset) / (1000 * 60 * 60),
+        averageMixingTime: this._calculateAverageMixingTime(),
+        poolUtilization: this._calculatePoolUtilization()
+      }
+    };
+
+    try {
+      // Проверяем состояние движка
+      if (!this.state.isRunning) {
+        health.checks.engine = { status: 'fail', message: 'Движок миксирования не запущен' };
+        health.status = 'unhealthy';
+      }
+
+      // Проверяем зависимости
+      const dependencies = ['poolManager', 'scheduler', 'validator', 'security', 'database'];
+      const missingDeps = dependencies.filter(dep => !this[dep]);
+      
+      if (missingDeps.length > 0) {
+        health.checks.dependencies = { 
+          status: 'fail', 
+          message: `Отсутствуют зависимости: ${missingDeps.join(', ')}` 
+        };
+        health.status = 'unhealthy';
+      }
+
+      // Проверяем доступность БД
+      if (this.database) {
+        try {
+          await this.database.query('SELECT 1');
+        } catch (error) {
+          health.checks.dependencies = { status: 'fail', message: `Ошибка доступа к БД: ${error.message}` };
+          health.status = 'unhealthy';
+        }
+      }
+
+      // Проверяем загрузку
+      const utilizationPercent = (this.state.activeMixes.size / this.config.maxConcurrentMixes) * 100;
+      if (utilizationPercent > 90) {
+        health.checks.capacity = { 
+          status: 'warn', 
+          message: `Высокая загрузка: ${Math.round(utilizationPercent)}%` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем очередь
+      if (this.state.processingQueue.length > 50) {
+        health.checks.capacity = { 
+          status: 'warn', 
+          message: `Переполнена очередь: ${this.state.processingQueue.length}` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем процент успеха
+      const successRate = this._calculateSuccessRate();
+      if (successRate < 80 && this.state.statistics.totalMixes > 10) {
+        health.checks.performance = { 
+          status: 'warn', 
+          message: `Низкий процент успеха: ${successRate}%` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем зависшие операции
+      const now = Date.now();
+      let stuckMixes = 0;
+      for (const [mixId, context] of this.state.activeMixes) {
+        const elapsed = now - context.startTime;
+        if (elapsed > this.config.maxMixingTime * 0.8) { // 80% от максимального времени
+          stuckMixes++;
+        }
+      }
+      
+      if (stuckMixes > 0) {
+        health.checks.performance = { 
+          status: 'warn', 
+          message: `Обнаружено ${stuckMixes} медленных операций` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем состояние пулов (если доступно)
+      if (this.poolManager && this.poolManager.healthCheck) {
+        try {
+          const poolHealth = await this.poolManager.healthCheck();
+          if (poolHealth.status !== 'healthy') {
+            health.checks.dependencies = { 
+              status: 'warn', 
+              message: `Проблемы с менеджером пулов: ${poolHealth.status}` 
+            };
+            if (health.status === 'healthy') {
+              health.status = 'degraded';
+            }
+          }
+        } catch (error) {
+          // Игнорируем ошибки проверки пулов
+        }
+      }
+
+    } catch (error) {
+      health.status = 'unhealthy';
+      health.error = error.message;
+      this.logger?.error('Ошибка проверки состояния движка:', error);
+    }
+
+    return health;
   }
 
   /**
@@ -763,6 +911,22 @@ class MixingEngine extends EventEmitter {
   }
 
   /**
+   * Обработчик события истощения пула
+   */
+  _handlePoolDepletion(data) {
+    this.logger?.warn('Pool depleted:', data);
+    this.emit('pool:depleted', data);
+  }
+
+  /**
+   * Обработчик события переполнения пула
+   */
+  _handlePoolOverflow(data) {
+    this.logger?.warn('Pool overflow:', data);
+    this.emit('pool:overflow', data);
+  }
+
+  /**
    * Запускает обработчик очереди
    */
   _startQueueProcessor() {
@@ -826,6 +990,31 @@ class MixingEngine extends EventEmitter {
     if (total === 0) return 100;
     
     return Math.round((this.state.statistics.successfulMixes / total) * 100);
+  }
+
+  /**
+   * Вычисляет утилизацию пулов
+   */
+  _calculatePoolUtilization() {
+    if (!this.poolManager) return 0;
+    
+    try {
+      // Получаем информацию о пулах через poolManager
+      const poolStats = this.poolManager.getPoolStatistics ? this.poolManager.getPoolStatistics() : null;
+      
+      if (poolStats && poolStats.utilizationRate !== undefined) {
+        return poolStats.utilizationRate;
+      }
+      
+      // Fallback расчет на основе активных миксов
+      const activeMixes = this.state.activeMixes.size;
+      const maxConcurrent = this.config.maxConcurrentMixes;
+      
+      return Math.round((activeMixes / maxConcurrent) * 100);
+    } catch (error) {
+      this.logger?.warn('Ошибка расчета утилизации пулов:', error.message);
+      return 0;
+    }
   }
 
   /**
@@ -895,6 +1084,54 @@ class MixingEngine extends EventEmitter {
   }
 
   /**
+   * Генерирует промежуточные адреса для обфускации
+   */
+  async _generateIntermediateAddresses(currency, count = 3) {
+    const addresses = [];
+    
+    try {
+      for (let i = 0; i < count; i++) {
+        if (this.blockchainManager && this.blockchainManager.generateAddress) {
+          // Используем реальный blockchain manager
+          const address = await this.blockchainManager.generateAddress(currency);
+          addresses.push(address);
+        } else {
+          // Fallback генерация для тестов
+          const mockAddress = this._generateMockAddress(currency, i);
+          addresses.push(mockAddress);
+        }
+      }
+      
+      this.logger?.debug('Сгенерированы промежуточные адреса', {
+        currency,
+        count: addresses.length
+      });
+      
+      return addresses;
+    } catch (error) {
+      this.logger?.error('Ошибка генерации промежуточных адресов:', error);
+      throw new Error(`Не удалось сгенерировать промежуточные адреса: ${error.message}`);
+    }
+  }
+
+  /**
+   * Генерирует mock адрес для тестирования
+   */
+  _generateMockAddress(currency, index) {
+    const prefixes = {
+      BTC: '1',
+      ETH: '0x',
+      USDT: '0x',
+      SOL: '11111'
+    };
+    
+    const prefix = prefixes[currency] || '1';
+    const randomPart = crypto.randomBytes(16).toString('hex');
+    
+    return `${prefix}${randomPart}${index}`;
+  }
+
+  /**
    * Ждет завершения всех активных операций
    */
   async _waitForActiveMixes() {
@@ -910,6 +1147,153 @@ class MixingEngine extends EventEmitter {
         activeMixes: this.state.activeMixes.size
       });
     }
+  }
+
+  /**
+   * Выполняет промежуточный перевод для обфускации
+   */
+  async _executeIntermediateTransfer(currency, fromAddress, toAddress, amount) {
+    try {
+      // Используем blockchain manager для выполнения перевода
+      if (this.blockchainManager && this.blockchainManager.sendTransaction) {
+        return await this.blockchainManager.sendTransaction(
+          currency,
+          fromAddress,
+          toAddress,
+          amount.toString()
+        );
+      }
+      
+      // Fallback для тестирования
+      const mockTxHash = crypto.randomBytes(32).toString('hex');
+      this.logger?.debug('Mock промежуточный перевод', {
+        currency,
+        from: fromAddress.substring(0, 10) + '...',
+        to: toAddress.substring(0, 10) + '...',
+        amount,
+        txHash: mockTxHash
+      });
+      
+      return mockTxHash;
+    } catch (error) {
+      this.logger?.error('Ошибка промежуточного перевода:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Выполняет финальный перевод на адрес получателя
+   */
+  async _executeFinalTransfer(currency, fromAddress, toAddress, amount) {
+    try {
+      // Используем blockchain manager для выполнения перевода
+      if (this.blockchainManager && this.blockchainManager.sendTransaction) {
+        return await this.blockchainManager.sendTransaction(
+          currency,
+          fromAddress,
+          toAddress,
+          amount.toString()
+        );
+      }
+      
+      // Fallback для тестирования
+      const mockTxHash = crypto.randomBytes(32).toString('hex');
+      this.logger?.debug('Mock финальный перевод', {
+        currency,
+        from: fromAddress.substring(0, 10) + '...',
+        to: toAddress.substring(0, 10) + '...',
+        amount,
+        txHash: mockTxHash
+      });
+      
+      return mockTxHash;
+    } catch (error) {
+      this.logger?.error('Ошибка финального перевода:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Создает части для микширования
+   */
+  async _createMixingChunks(amount, currency) {
+    const chunkCount = Math.min(Math.floor(Math.random() * 5) + 2, 7); // 2-7 частей
+    const chunks = [];
+    let remaining = amount;
+    
+    for (let i = 0; i < chunkCount - 1; i++) {
+      const chunkSize = Math.random() * (remaining * 0.3); // до 30% от остатка
+      chunks.push({
+        currency,
+        amount: chunkSize,
+        index: i
+      });
+      remaining -= chunkSize;
+    }
+    
+    // Последняя часть - остаток
+    chunks.push({
+      currency,
+      amount: remaining,
+      index: chunkCount - 1
+    });
+    
+    this.logger?.debug('Созданы части для микширования', {
+      currency,
+      totalAmount: amount,
+      chunksCount: chunks.length
+    });
+    
+    return chunks;
+  }
+
+  /**
+   * Повторная попытка микширования
+   */
+  async _retryMixing(mixContext) {
+    try {
+      // Сбрасываем состояние для повтора
+      mixContext.status = 'RETRYING';
+      mixContext.currentPhase = 'VALIDATION';
+      mixContext.progress = 0;
+      mixContext.transactions = [];
+      
+      this.logger?.info('Повторная попытка микширования', {
+        mixId: mixContext.id,
+        retryCount: mixContext.retryCount
+      });
+      
+      // Перезапускаем стратегию
+      await this._executeMixingStrategy(mixContext, mixContext.strategy);
+      
+    } catch (error) {
+      await this._handleMixingError(mixContext, error);
+    }
+  }
+
+  /**
+   * Создание заглушек для методов, которые пока не реализованы
+   */
+  async _notifyParticipant(participant, notification) {
+    this.logger?.debug('Уведомление участника', { participant: participant.id, type: notification.type });
+  }
+
+  async _waitForParticipantConfirmations(coordinationId, participants) {
+    this.logger?.debug('Ожидание подтверждений', { coordinationId, count: participants.length });
+    // Имитируем задержку
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+
+  async _createCoinJoinTransaction(mixContext) {
+    return { type: 'COINJOIN', participants: mixContext.strategy.participants };
+  }
+
+  async _collectSignatures(transaction, participants) {
+    return participants.map(p => ({ participantId: p.id, signature: 'mock_signature' }));
+  }
+
+  async _combineCoinJoinSignatures(transaction, signatures) {
+    return { ...transaction, signatures };
   }
 }
 

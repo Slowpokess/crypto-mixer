@@ -457,6 +457,96 @@ class MonitoringSystem extends EventEmitter {
   /**
    * Получает статистику мониторинга
    */
+  /**
+   * Получает текущий статус системы мониторинга
+   */
+  getStatus() {
+    return {
+      isRunning: this.isRunning,
+      activeAlerts: this.alerts.filter(alert => alert.status === 'ACTIVE').length,
+      totalMetricsCollected: this.metricsCollected || 0,
+      uptime: this.startTime ? Date.now() - this.startTime : 0
+    };
+  }
+
+  /**
+   * Выполняет проверку состояния системы мониторинга
+   */
+  async healthCheck() {
+    const health = {
+      status: 'healthy',
+      timestamp: new Date(),
+      checks: {
+        monitoring: { status: 'pass', message: 'Мониторинг работает нормально' },
+        database: { status: 'pass', message: 'Подключение к БД стабильно' },
+        metrics: { status: 'pass', message: 'Сбор метрик активен' },
+        alerts: { status: 'pass', message: 'Система алертов функционирует' }
+      },
+      details: {
+        isMonitoring: this.isMonitoring,
+        activeAlertsCount: Array.from(this.recentAlerts.values()).filter(a => a.status === 'ACTIVE').length,
+        metricsCollected: {
+          system: this.metrics.system.size,
+          business: this.metrics.business.size,
+          security: this.metrics.security.size,
+          performance: this.metrics.performance.size
+        },
+        counters: this.counters
+      }
+    };
+
+    try {
+      // Проверяем состояние мониторинга
+      if (!this.isMonitoring) {
+        health.checks.monitoring = { status: 'fail', message: 'Мониторинг не запущен' };
+        health.status = 'unhealthy';
+      }
+
+      // Проверяем подключение к БД
+      if (this.database) {
+        try {
+          await this.database.query('SELECT 1');
+        } catch (error) {
+          health.checks.database = { status: 'fail', message: `Ошибка БД: ${error.message}` };
+          health.status = 'unhealthy';
+        }
+      }
+
+      // Проверяем критические алерты
+      const criticalAlerts = Array.from(this.recentAlerts.values())
+        .filter(alert => alert.severity === 'CRITICAL' && alert.status === 'ACTIVE');
+      
+      if (criticalAlerts.length > 0) {
+        health.checks.alerts = { 
+          status: 'warn', 
+          message: `Обнаружено ${criticalAlerts.length} критических алертов` 
+        };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+      // Проверяем активность сбора метрик
+      const now = Date.now();
+      const recentMetrics = Array.from(this.metrics.system.keys())
+        .filter(timestamp => now - timestamp < 5 * 60 * 1000); // последние 5 минут
+      
+      if (recentMetrics.length === 0 && this.isMonitoring) {
+        health.checks.metrics = { status: 'warn', message: 'Нет свежих метрик за последние 5 минут' };
+        if (health.status === 'healthy') {
+          health.status = 'degraded';
+        }
+      }
+
+    } catch (error) {
+      health.status = 'unhealthy';
+      health.error = error.message;
+      this.logger?.error('Ошибка проверки состояния мониторинга:', error);
+    }
+
+    return health;
+  }
+
   getMonitoringStatistics() {
     const now = Date.now();
     
@@ -716,6 +806,77 @@ class MonitoringSystem extends EventEmitter {
         threshold: this.config.alertThresholds.latency,
         currentValue: operation.duration
       });
+    }
+  }
+
+  /**
+   * Проверяет системные пороговые значения
+   */
+  async _checkSystemThresholds(metrics) {
+    if (!metrics || !this.config.alertThresholds) {
+      return;
+    }
+
+    try {
+      const issues = [];
+
+      // Проверяем CPU
+      if (metrics.system && metrics.system.cpuUsage) {
+        const cpuUsage = this._calculateCPUUsage(metrics.system.cpuUsage);
+        if (cpuUsage > this.config.alertThresholds.systemLoad) {
+          issues.push({
+            type: 'HIGH_CPU',
+            value: cpuUsage,
+            threshold: this.config.alertThresholds.systemLoad
+          });
+        }
+      }
+
+      // Проверяем память
+      if (metrics.system && metrics.system.memoryUsage) {
+        const memoryUsage = (metrics.system.memoryUsage.used / metrics.system.memoryUsage.total) * 100;
+        if (memoryUsage > this.config.alertThresholds.memoryUsage) {
+          issues.push({
+            type: 'HIGH_MEMORY',
+            value: memoryUsage,
+            threshold: this.config.alertThresholds.memoryUsage
+          });
+        }
+      }
+
+      // Проверяем очереди операций
+      if (metrics.queues) {
+        for (const [queueName, queueMetrics] of Object.entries(metrics.queues)) {
+          if (queueMetrics.length > this.config.alertThresholds.queueLength) {
+            issues.push({
+              type: 'QUEUE_OVERFLOW',
+              queue: queueName,
+              value: queueMetrics.length,
+              threshold: this.config.alertThresholds.queueLength
+            });
+          }
+        }
+      }
+
+      // Создаем алерты для найденных проблем
+      for (const issue of issues) {
+        this.logger?.warn('Системный порог превышен:', issue);
+        
+        await this.createAlert({
+          type: issue.type,
+          severity: 'HIGH',
+          title: `Превышен системный порог: ${issue.type}`,
+          description: `Значение: ${issue.value}, Порог: ${issue.threshold}`,
+          source: 'SYSTEM_THRESHOLDS',
+          currentValue: issue.value,
+          threshold: issue.threshold
+        });
+      }
+
+      return issues;
+    } catch (error) {
+      this.logger?.error('Ошибка проверки системных порогов:', error);
+      return [];
     }
   }
 
