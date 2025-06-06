@@ -1,4 +1,4 @@
-import amqp, { Connection, Channel, ConsumeMessage } from 'amqplib';
+import amqp, { ConsumeMessage } from 'amqplib';
 import { Logger } from '../utils/logger';
 
 export interface RabbitMQConfig {
@@ -10,8 +10,8 @@ export interface RabbitMQConfig {
 }
 
 export class MessageQueue {
-  private connection: Connection | null = null;
-  private channel: Channel | null = null;
+  private connection: any | null = null;
+  private channel: amqp.Channel | null = null;
   private logger: Logger;
   private config: RabbitMQConfig;
 
@@ -35,16 +35,20 @@ export class MessageQueue {
       const connectionUrl = `amqp://${this.config.username}:${this.config.password}@${this.config.host}:${this.config.port}${this.config.vhost}`;
       
       this.connection = await amqp.connect(connectionUrl);
-      this.channel = await this.connection.createChannel();
+      if (this.connection) {
+        this.channel = await this.connection.createChannel();
+      }
 
       // Setup connection error handlers
-      this.connection.on('error', (error) => {
-        this.logger.error('RabbitMQ connection error', error);
-      });
+      if (this.connection) {
+        this.connection.on('error', (error: Error) => {
+          this.logger.error('RabbitMQ connection error', error);
+        });
 
-      this.connection.on('close', () => {
-        this.logger.warn('RabbitMQ connection closed');
-      });
+        this.connection.on('close', () => {
+          this.logger.warn('RabbitMQ connection closed');
+        });
+      }
 
       this.logger.info('Connected to RabbitMQ', {
         host: this.config.host,
@@ -198,7 +202,7 @@ export class MessageQueue {
       await this.channel.bindQueue(queueName, exchange, routingKey);
 
       // Start consuming
-      await this.channel.consume(queueName, async (msg: ConsumeMessage | null) => {
+      await this.channel.consume(queueName, async (msg: amqp.ConsumeMessage | null) => {
         if (!msg) {
           return;
         }

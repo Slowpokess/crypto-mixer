@@ -1,0 +1,527 @@
+services:
+  # PostgreSQL Database with replication
+  postgres-master:
+    image: postgres:16-alpine
+    container_name: mixer-postgres-master
+    environment:
+      POSTGRES_DB: mixer_db
+      POSTGRES_USER: mixer_user
+      POSTGRES_PASSWORD: mixer_dev_password_123
+      POSTGRES_REPLICATION_MODE: master
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: replication_dev_password_123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-master-data:/var/lib/postgresql/data
+      - ./scripts/postgres:/docker-entrypoint-initdb.d
+    networks:
+      - mixer-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mixer_user -d mixer_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-slave:
+    image: postgres:16-alpine
+    container_name: mixer-postgres-slave
+    environment:
+      POSTGRES_MASTER_SERVICE: postgres-master
+      POSTGRES_REPLICATION_MODE: slave
+      POSTGRES_MASTER_PORT: 5432
+      POSTGRES_USER: mixer_user
+      POSTGRES_PASSWORD: mixer_dev_password_123
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: replication_dev_password_123
+    volumes:
+      - postgres-slave-data:/var/lib/postgresql/data
+    networks:
+      - mixer-network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+
+  # Redis Cluster
+  redis-master:
+    image: redis:7-alpine
+    container_name: mixer-redis-master
+    command: redis-server --requirepass redis_dev_password_123 --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - mixer-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # RabbitMQ for message queue
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: mixer-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: mixer
+      RABBITMQ_DEFAULT_PASS: rabbitmq_dev_password_123
+      RABBITMQ_CONFIG_FILE: /etc/rabbitmq/rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"  # Management UI
+      - "15692:15692"  # Prometheus metrics
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./infrastructure/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./infrastructure/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+    networks:
+      - mixer-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+
+  # Kong Database
+  kong-database:
+    image: postgres:16-alpine
+    container_name: mixer-kong-db
+    environment:
+      POSTGRES_DB: kong
+      POSTGRES_USER: kong
+      POSTGRES_PASSWORD: kong_dev_password_123
+    volumes:
+      - kong-db-data:/var/lib/postgresql/data
+    networks:
+      - mixer-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kong -d kong"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kong-migration:
+    image: kong:latest
+    container_name: mixer-kong-migration
+    command: kong migrations bootstrap
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_DATABASE: kong
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kong_dev_password_123
+    networks:
+      - mixer-network
+    depends_on:
+      kong-database:
+        condition: service_healthy
+    restart: "no"
+
+  kong:
+    image: kong:latest
+    container_name: mixer-kong
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_DATABASE: kong
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kong_dev_password_123
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_PLUGINS: bundled,rate-limiting,cors,jwt,request-transformer
+    ports:
+      - "8000:8000"  # Proxy
+      - "8001:8001"  # Admin API
+      - "8443:8443"  # Proxy SSL
+      - "8444:8444"  # Admin API SSL
+    networks:
+      - mixer-network
+    depends_on:
+      kong-migration:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Mixer API Service
+  mixer-api:
+    build:
+      context: .
+      dockerfile: ./services/mixer-api/Dockerfile
+    container_name: mixer-api
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DB_HOST: postgres-master
+      DB_PORT: 5432
+      DB_NAME: mixer_db
+      DB_USER: mixer_user
+      DB_PASSWORD: mixer_dev_password_123
+      REDIS_HOST: redis-master
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_dev_password_123
+      RABBITMQ_URL: amqp://mixer:rabbitmq_dev_password_123@rabbitmq:5672
+      JWT_SECRET: jwt_development_secret_key_32_chars_long
+      ENCRYPTION_KEY: encryption_dev_key_32_chars_long_abc
+      BLOCKCHAIN_SERVICE_URL: http://blockchain-service:3001
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./services/mixer-api:/app
+      - /app/node_modules
+    networks:
+      - mixer-network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Blockchain Service
+  blockchain-service:
+    build:
+      context: .
+      dockerfile: ./services/blockchain-service/Dockerfile
+    container_name: blockchain-service
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DB_HOST: postgres-master
+      DB_PORT: 5432
+      DB_NAME: mixer_db
+      DB_USER: mixer_user
+      DB_PASSWORD: mixer_dev_password_123
+      REDIS_HOST: redis-master
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_dev_password_123
+      RABBITMQ_URL: amqp://mixer:rabbitmq_dev_password_123@rabbitmq:5672
+      BTC_NODE_HOST: localhost
+      BTC_RPC_USER: bitcoin_dev_user
+      BTC_RPC_PASSWORD: bitcoin_dev_password_123
+      ETH_RPC_URL: https://sepolia.infura.io/v3/your_infura_key_here
+      SOL_RPC_URL: https://api.devnet.solana.com
+      TRON_API_URL: https://api.shasta.trongrid.io
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./services/blockchain-service:/app
+      - /app/node_modules
+      - blockchain-keys:/app/keys:ro
+    networks:
+      - mixer-network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Scheduler Service
+  scheduler-service:
+    build:
+      context: ./services/scheduler-service
+      dockerfile: Dockerfile
+    container_name: scheduler-service
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+      DB_HOST: postgres-master
+      DB_PORT: 5432
+      DB_NAME: mixer_db
+      DB_USER: mixer_user
+      DB_PASSWORD: mixer_dev_password_123
+      REDIS_HOST: redis-master
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_dev_password_123
+      RABBITMQ_URL: amqp://mixer:rabbitmq_dev_password_123@rabbitmq:5672
+    ports:
+      - "3002:3002"
+    volumes:
+      - ./services/scheduler-service:/app
+      - /app/node_modules
+    networks:
+      - mixer-network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Wallet Service
+  wallet-service:
+    build:
+      context: ./services/wallet-service
+      dockerfile: Dockerfile
+    container_name: wallet-service
+    environment:
+      NODE_ENV: development
+      PORT: 3003
+      DB_HOST: postgres-master
+      DB_PORT: 5432
+      DB_NAME: mixer_db
+      DB_USER: mixer_user
+      DB_PASSWORD: mixer_dev_password_123
+      REDIS_HOST: redis-master
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_dev_password_123
+      HSM_ENABLED: "false"
+      MASTER_KEY: master_dev_key_32_chars_long_change
+    ports:
+      - "3003:3003"
+    volumes:
+      - ./services/wallet-service:/app
+      - /app/node_modules
+      - wallet-keys:/app/keys
+    networks:
+      - mixer-network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Monitoring Service
+  monitoring-service:
+    build:
+      context: ./services/monitoring-service
+      dockerfile: Dockerfile
+    container_name: monitoring-service
+    environment:
+      NODE_ENV: development
+      PORT: 3004
+      DB_HOST: postgres-master
+      DB_PORT: 5432
+      DB_NAME: mixer_db
+      DB_USER: mixer_user
+      DB_PASSWORD: mixer_dev_password_123
+      REDIS_HOST: redis-master
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_dev_password_123
+      PROMETHEUS_URL: http://prometheus:9090
+      GRAFANA_URL: http://grafana:3000
+    ports:
+      - "3004:3004"
+    volumes:
+      - ./services/monitoring-service:/app
+      - /app/node_modules
+    networks:
+      - mixer-network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Tor Proxy Service
+  tor-proxy:
+    build:
+      context: ./services/tor-proxy
+      dockerfile: Dockerfile
+    container_name: tor-proxy
+    environment:
+      NODE_ENV: development
+      PORT: 3005
+      TOR_PROXY_PORT: 9050
+      TOR_CONTROL_PORT: 9051
+    ports:
+      - "3005:3005"
+      - "9050:9050"  # SOCKS proxy
+      - "9051:9051"  # Control port
+    volumes:
+      - ./services/tor-proxy:/app
+      - /app/node_modules
+      - tor-data:/var/lib/tor
+    networks:
+      - mixer-network
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mixer-frontend
+    environment:
+      NODE_ENV: development
+      REACT_APP_API_URL: http://localhost:8000/api/v1  # Через Kong Gateway
+      REACT_APP_WS_URL: ws://localhost:8000/ws
+    ports:
+      - "8080:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - mixer-network
+    depends_on:
+      - kong
+      - mixer-api
+    restart: unless-stopped
+
+  # Admin Dashboard
+  admin-dashboard:
+    build:
+      context: ./admin-dashboard
+      dockerfile: Dockerfile
+    container_name: mixer-admin
+    environment:
+      NODE_ENV: development
+      REACT_APP_API_URL: http://localhost:8000/api/v1  # Через Kong Gateway
+      REACT_APP_WS_URL: ws://localhost:8000/ws
+    ports:
+      - "8081:3000"
+    volumes:
+      - ./admin-dashboard:/app
+      - /app/node_modules
+    networks:
+      - mixer-network
+    depends_on:
+      - kong
+      - mixer-api
+    restart: unless-stopped
+
+  # Prometheus для метрик
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mixer-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - mixer-network
+    restart: unless-stopped
+
+  # Grafana для дашбордов
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mixer-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: grafana_dev_password_123
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_HOST: postgres-master:5432
+      GF_DATABASE_NAME: grafana
+      GF_DATABASE_USER: mixer_user
+      GF_DATABASE_PASSWORD: mixer_dev_password_123
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./infrastructure/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - mixer-network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    restart: unless-stopped
+
+  # Loki для логов
+  loki:
+    image: grafana/loki:latest
+    container_name: mixer-loki
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./infrastructure/monitoring/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    networks:
+      - mixer-network
+    restart: unless-stopped
+
+  # Promtail для сбора логов
+  promtail:
+    image: grafana/promtail:latest
+    container_name: mixer-promtail
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./infrastructure/monitoring/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      - mixer-network
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  # HashiCorp Vault для секретов
+  vault:
+    image: vault:latest
+    container_name: mixer-vault
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: vault_dev_token_123
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault-data:/vault/data
+      - ./security/vault/config.hcl:/vault/config/config.hcl:ro
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - mixer-network
+    command: 'vault server -dev -dev-root-token-id="vault_dev_token_123"'
+    restart: unless-stopped
+
+  # Security Scanner
+  security-scanner:
+    build:
+      context: ./services/security-scanner
+      dockerfile: Dockerfile
+    container_name: security-scanner
+    environment:
+      SCAN_INTERVAL: 3600
+      SLACK_WEBHOOK: https://hooks.slack.com/services/dev/webhook
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: vault_dev_token_123
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - mixer-network
+    depends_on:
+      - vault
+    restart: unless-stopped
+
+volumes:
+  postgres-master-data:
+  postgres-slave-data:
+  redis-data:
+  rabbitmq-data:
+  kong-db-data:
+  blockchain-keys:
+  wallet-keys:
+  tor-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  nginx-cache:
+  vault-data:
+
+networks:
+  mixer-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

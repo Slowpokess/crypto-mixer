@@ -15,6 +15,12 @@ export class MixerService {
   }
 
   public async createMixRequest(mixRequest: MixRequest): Promise<void> {
+    this.logger.info('Creating mix request', {
+      sessionId: mixRequest.sessionId,
+      currency: mixRequest.currency,
+      amount: mixRequest.amount
+    });
+
     const query = `
       INSERT INTO mix_requests (
         id, session_id, currency, amount, fee, total_amount,
@@ -38,13 +44,28 @@ export class MixerService {
       mixRequest.expiresAt,
     ];
 
-    await this.db.query(query, values);
+    try {
+      await this.db.query(query, values);
+      
+      this.logger.info('Mix request created successfully', {
+        sessionId: mixRequest.sessionId,
+        id: mixRequest.id
+      });
 
-    // Emit event for other services
-    this.eventEmitter.emit('mix:created', mixRequest);
+      // Emit event for other services
+      this.eventEmitter.emit('mix:created', mixRequest);
+    } catch (error) {
+      this.logger.error('Failed to create mix request', error as Error, {
+        sessionId: mixRequest.sessionId,
+        currency: mixRequest.currency
+      });
+      throw error;
+    }
   }
 
   public async getMixRequest(sessionId: string): Promise<MixRequest | null> {
+    this.logger.info('Retrieving mix request', { sessionId });
+
     const query = `
       SELECT * FROM mix_requests 
       WHERE session_id = $1 AND expires_at > NOW()
@@ -112,9 +133,17 @@ export class MixerService {
   }
 
   private async getFeePercentage(currency: Currency): Promise<number> {
-    // Dynamic fee based on network conditions
-    // In production, this would check network congestion
-    return 1.5; // 1.5%
+    // Dynamic fee based on network conditions and currency type
+    this.logger.debug('Calculating fee percentage', { currency });
+    
+    const baseFees: Record<Currency, number> = {
+      BTC: 1.5,
+      ETH: 1.2,
+      USDT: 1.0,
+      SOL: 1.8
+    };
+    
+    return baseFees[currency] || 1.5;
   }
 
   private async getMinimumFee(currency: Currency): Promise<number> {

@@ -13,7 +13,7 @@ export class ErrorHandler {
     error: AppError,
     req: Request,
     res: Response,
-    next: NextFunction
+    _next: NextFunction
   ): void => {
     let statusCode = error.statusCode || 500;
     let message = error.message || 'Internal Server Error';
@@ -65,7 +65,7 @@ export class ErrorHandler {
     res.status(statusCode).json(response);
   };
 
-  static notFound = (req: Request, res: Response, next: NextFunction): void => {
+  static notFound = (req: Request, _res: Response, next: NextFunction): void => {
     const error: AppError = new Error(`Not Found - ${req.originalUrl}`);
     error.statusCode = 404;
     error.isOperational = true;

@@ -1,0 +1,250 @@
+groups:
+  - name: mixer_api_alerts
+    interval: 30s
+    rules:
+      # High error rate
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{job="mixer-api",status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{job="mixer-api"}[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: mixer-api
+        annotations:
+          summary: "High error rate on Mixer API"
+          description: "Error rate is {{ $value | humanizePercentage }} for the last 5 minutes"
+
+      # API Latency
+      - alert: HighAPILatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket{job="mixer-api"}[5m])) by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: mixer-api
+        annotations:
+          summary: "High API latency detected"
+          description: "95th percentile latency is {{ $value }}s"
+
+      # Mix request failures
+      - alert: MixRequestFailures
+        expr: |
+          sum(rate(mix_requests_failed_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          service: mixer
+        annotations:
+          summary: "Mix requests are failing"
+          description: "{{ $value }} mix requests per second are failing"
+
+      # No new mixes
+      - alert: NoNewMixes
+        expr: |
+          sum(rate(mix_requests_created_total[30m])) == 0
+        for: 30m
+        labels:
+          severity: warning
+          service: mixer
+        annotations:
+          summary: "No new mix requests in 30 minutes"
+          description: "The system hasn't received any new mix requests"
+
+  - name: wallet_alerts
+    interval: 30s
+    rules:
+      # Low wallet balance
+      - alert: LowHotWalletBalance
+        expr: |
+          wallet_balance{wallet_type="hot"} < 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: wallet
+        annotations:
+          summary: "Low hot wallet balance"
+          description: "{{ $labels.currency }} hot wallet balance is {{ $value }}"
+
+      # Wallet service down
+      - alert: WalletServiceDown
+        expr: up{job="wallet-service"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: wallet
+        annotations:
+          summary: "Wallet service is down"
+          description: "Wallet service has been down for more than 2 minutes"
+
+      # HSM disconnected
+      - alert: HSMDisconnected
+        expr: hsm_connected == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: wallet
+        annotations:
+          summary: "HSM is disconnected"
+          description: "Hardware Security Module is not connected"
+
+  - name: blockchain_alerts
+    interval: 30s
+    rules:
+      # Blockchain node sync
+      - alert: BlockchainNodeOutOfSync
+        expr: |
+          blockchain_node_synced == 0
+        for: 10m
+        labels:
+          severity: critical
+          service: blockchain
+        annotations:
+          summary: "Blockchain node out of sync"
+          description: "{{ $labels.currency }} node is not synced"
+
+      # Transaction confirmation delays
+      - alert: TransactionConfirmationDelay
+        expr: |
+          blockchain_pending_confirmations > 100
+        for: 15m
+        labels:
+          severity: warning
+          service: blockchain
+        annotations:
+          summary: "High number of pending confirmations"
+          description: "{{ $value }} transactions waiting for confirmations"
+
+      # Failed transactions
+      - alert: HighTransactionFailureRate
+        expr: |
+          sum(rate(blockchain_transactions_failed_total[5m])) by (currency) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          service: blockchain
+        annotations:
+          summary: "High transaction failure rate"
+          description: "{{ $labels.currency }} transactions failing at {{ $value }} per second"
+
+  - name: infrastructure_alerts
+    interval: 30s
+    rules:
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: |
+          (
+            100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+          ) > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)
+            / node_memory_MemTotal_bytes
+          ) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }}"
+
+      # Disk space
+      - alert: LowDiskSpace
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/"}
+            / node_filesystem_size_bytes{mountpoint="/"}
+          ) * 100 < 15
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Low disk space"
+          description: "Only {{ $value }}% disk space left on {{ $labels.instance }}"
+
+      # PostgreSQL down
+      - alert: PostgreSQLDown
+        expr: up{job="postgresql"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL database is not responding"
+
+      # Redis down
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: cache
+        annotations:
+          summary: "Redis is down"
+          description: "Redis cache is not responding"
+
+      # RabbitMQ queue buildup
+      - alert: RabbitMQQueueBuildup
+        expr: |
+          rabbitmq_queue_messages_ready > 1000
+        for: 10m
+        labels:
+          severity: warning
+          service: queue
+        annotations:
+          summary: "RabbitMQ queue buildup"
+          description: "Queue {{ $labels.queue }} has {{ $value }} messages waiting"
+
+  - name: security_alerts
+    interval: 30s
+    rules:
+      # Suspicious activity
+      - alert: SuspiciousActivityDetected
+        expr: |
+          sum(rate(security_suspicious_requests_total[5m])) > 10
+        for: 2m
+        labels:
+          severity: critical
+          service: security
+        annotations:
+          summary: "Suspicious activity detected"
+          description: "{{ $value }} suspicious requests per second"
+
+      # DDoS attack
+      - alert: PossibleDDoSAttack
+        expr: |
+          sum(rate(nginx_http_requests_total[1m])) > 10000
+        for: 2m
+        labels:
+          severity: critical
+          service: security
+        annotations:
+          summary: "Possible DDoS attack"
+          description: "Request rate is {{ $value }} per second"
+
+      # SSL certificate expiry
+      - alert: SSLCertificateExpiringSoon
+        expr: |
+          probe_ssl_earliest_cert_expiry - time() < 7 * 24 * 60 * 60
+        for: 1h
+        labels:
+          severity: warning
+          service: security
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: "SSL certificate for {{ $labels.instance }} expires in {{ $value | humanizeDuration }}"

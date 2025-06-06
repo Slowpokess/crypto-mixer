@@ -1,0 +1,200 @@
+{
+  "users": [
+    {
+      "name": "mixer",
+      "password_hash": "6AzuJJM7ZpRUGnSWEHqIeqCH7WJ/Ff2QgXhT0QW7VWkdU6o3",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": "administrator"
+    }
+  ],
+  "vhosts": [
+    {
+      "name": "/"
+    },
+    {
+      "name": "/mixer"
+    }
+  ],
+  "permissions": [
+    {
+      "user": "mixer",
+      "vhost": "/",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    },
+    {
+      "user": "mixer",
+      "vhost": "/mixer",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "mixer.events",
+      "vhost": "/mixer",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "mixer.dlx",
+      "vhost": "/mixer",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "mixer.scheduler",
+      "vhost": "/mixer",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "mix.requests",
+      "vhost": "/mixer",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 86400000,
+        "x-dead-letter-exchange": "mixer.dlx",
+        "x-dead-letter-routing-key": "mix.requests.dlq",
+        "x-max-retries": 3
+      }
+    },
+    {
+      "name": "blockchain.transactions",
+      "vhost": "/mixer",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 86400000,
+        "x-dead-letter-exchange": "mixer.dlx",
+        "x-dead-letter-routing-key": "blockchain.transactions.dlq"
+      }
+    },
+    {
+      "name": "scheduler.jobs",
+      "vhost": "/mixer",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 604800000,
+        "x-dead-letter-exchange": "mixer.dlx",
+        "x-dead-letter-routing-key": "scheduler.jobs.dlq"
+      }
+    },
+    {
+      "name": "notifications",
+      "vhost": "/mixer",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 3600000
+      }
+    },
+    {
+      "name": "mix.requests.dlq",
+      "vhost": "/mixer",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "blockchain.transactions.dlq",
+      "vhost": "/mixer",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "scheduler.jobs.dlq",
+      "vhost": "/mixer",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    }
+  ],
+  "bindings": [
+    {
+      "source": "mixer.events",
+      "vhost": "/mixer",
+      "destination": "mix.requests",
+      "destination_type": "queue",
+      "routing_key": "mix.created",
+      "arguments": {}
+    },
+    {
+      "source": "mixer.events",
+      "vhost": "/mixer",
+      "destination": "blockchain.transactions",
+      "destination_type": "queue",
+      "routing_key": "transaction.*",
+      "arguments": {}
+    },
+    {
+      "source": "mixer.scheduler",
+      "vhost": "/mixer",
+      "destination": "scheduler.jobs",
+      "destination_type": "queue",
+      "routing_key": "schedule.*",
+      "arguments": {}
+    },
+    {
+      "source": "mixer.dlx",
+      "vhost": "/mixer",
+      "destination": "mix.requests.dlq",
+      "destination_type": "queue",
+      "routing_key": "mix.requests.dlq",
+      "arguments": {}
+    },
+    {
+      "source": "mixer.dlx",
+      "vhost": "/mixer",
+      "destination": "blockchain.transactions.dlq",
+      "destination_type": "queue",
+      "routing_key": "blockchain.transactions.dlq",
+      "arguments": {}
+    },
+    {
+      "source": "mixer.dlx",
+      "vhost": "/mixer",
+      "destination": "scheduler.jobs.dlq",
+      "destination_type": "queue",
+      "routing_key": "scheduler.jobs.dlq",
+      "arguments": {}
+    }
+  ],
+  "global_parameters": [
+    {
+      "name": "cluster_name",
+      "value": "mixer-cluster"
+    }
+  ],
+  "policies": [
+    {
+      "vhost": "/mixer",
+      "name": "ha-all",
+      "pattern": ".*",
+      "apply-to": "all",
+      "definition": {
+        "ha-mode": "all",
+        "ha-sync-mode": "automatic",
+        "ha-sync-batch-size": 80,
+        "message-ttl": 86400000
+      },
+      "priority": 0
+    }
+  ]
+}

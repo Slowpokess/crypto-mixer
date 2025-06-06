@@ -22,7 +22,7 @@ export class HealthRouter {
     this.router.get('/detailed', this.detailedHealthCheck);
   }
 
-  private healthCheck = async (req: Request, res: Response): Promise<void> => {
+  private healthCheck = async (_req: Request, res: Response): Promise<void> => {
     try {
       const uptime = process.uptime();
       const memoryUsage = process.memoryUsage();
@@ -46,7 +46,7 @@ export class HealthRouter {
     }
   };
 
-  private detailedHealthCheck = async (req: Request, res: Response): Promise<void> => {
+  private detailedHealthCheck = async (_req: Request, res: Response): Promise<void> => {
     try {
       const uptime = process.uptime();
       const memoryUsage = process.memoryUsage();

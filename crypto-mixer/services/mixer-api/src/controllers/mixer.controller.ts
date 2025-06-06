@@ -96,6 +96,11 @@ export class MixerController {
     try {
       const { sessionId } = req.params;
 
+      if (!sessionId) {
+        res.status(400).json({ error: 'Session ID is required' });
+        return;
+      }
+
       // Check cache first
       let mixRequest = await this.cacheService.get(`mix:${sessionId}`);
       

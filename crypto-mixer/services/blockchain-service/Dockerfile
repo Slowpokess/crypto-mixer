@@ -1,37 +1,49 @@
 # Blockchain Service Dockerfile
 FROM node:20-alpine3.19
 
-WORKDIR /app
-
-# Install dependencies for building native modules
-RUN apk add --no-cache python3 make g++
-
-# Copy package files
-COPY package*.json ./
-
-# Install dependencies
-RUN npm ci --only=production
-
-# Copy source code
-COPY src/ ./src/
-COPY tsconfig.json ./
-
-# Build TypeScript
-RUN npm run build
-
-# Remove dev dependencies and build tools
-RUN npm prune --production && \
-    apk del python3 make g++
-
-# Create directories for keys and logs
-RUN mkdir -p /app/keys /app/logs
+# Install system dependencies
+RUN apk add --no-cache \
+    bash \
+    curl \
+    git \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/cache/apk/*
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S blockchain -u 1001
 
-# Change ownership of app directory
-RUN chown -R blockchain:nodejs /app
+# Create workspace directory
+WORKDIR /workspace
+
+# Copy root package.json and package-lock.json
+COPY package.json package-lock.json ./
+
+# Create directory for blockchain-service
+RUN mkdir -p services/blockchain-service
+
+# Copy blockchain-service package.json
+COPY ./services/blockchain-service/package.json ./services/blockchain-service/
+
+# Install all workspace dependencies
+RUN npm ci && \
+    npm cache clean --force
+
+# Switch to blockchain-service directory
+WORKDIR /workspace/services/blockchain-service
+
+# Copy source code
+COPY ./services/blockchain-service/src ./src
+COPY ./services/blockchain-service/tsconfig.json ./
+
+# Build TypeScript
+RUN npm run build
+
+# Create directories for keys and logs
+RUN mkdir -p /workspace/services/blockchain-service/keys /workspace/services/blockchain-service/logs && \
+    chown -R blockchain:nodejs /workspace
 
 USER blockchain
 

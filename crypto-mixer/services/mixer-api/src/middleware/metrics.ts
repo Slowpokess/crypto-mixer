@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { Logger } from '../utils/logger';
+import { register, Counter, Histogram, collectDefaultMetrics } from 'prom-client';
 
 export interface MetricsData {
   timestamp: Date;
@@ -21,31 +22,73 @@ export class MetricsMiddleware {
   private static metrics: MetricsData[] = [];
   private static readonly MAX_METRICS = 10000; // Keep last 10k requests
 
+  // Prometheus metrics
+  private static httpRequestsTotal: Counter<string>;
+  private static httpRequestDuration: Histogram<string>;
+  private static initialized = false;
+
+  static initialize(): void {
+    if (MetricsMiddleware.initialized) return;
+
+    // Collect default metrics
+    collectDefaultMetrics({ register });
+
+    // HTTP requests counter
+    MetricsMiddleware.httpRequestsTotal = new Counter({
+      name: 'http_requests_total',
+      help: 'Total number of HTTP requests',
+      labelNames: ['method', 'route', 'status_code'],
+      registers: [register],
+    });
+
+    // HTTP request duration histogram
+    MetricsMiddleware.httpRequestDuration = new Histogram({
+      name: 'http_request_duration_seconds',
+      help: 'Duration of HTTP requests in seconds',
+      labelNames: ['method', 'route', 'status_code'],
+      buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5],
+      registers: [register],
+    });
+
+    MetricsMiddleware.initialized = true;
+  }
+
   static track = (
     req: RequestMetrics,
     res: Response,
     next: NextFunction
   ): void => {
+    MetricsMiddleware.initialize();
     req.startTime = Date.now();
 
     // Override res.end to capture metrics when response is sent
-    const originalEnd = res.end;
-    res.end = function(chunk?: any, encoding?: any) {
+    const originalEnd = res.end.bind(res);
+    res.end = function(chunk?: any, encoding?: any, _cb?: () => void) {
       const responseTime = Date.now() - (req.startTime || Date.now());
+      const route = req.route?.path || req.path;
       
       const metricsData: MetricsData = {
         timestamp: new Date(),
         method: req.method,
-        path: req.route?.path || req.path,
+        path: route,
         statusCode: res.statusCode,
         responseTime,
-        userAgent: req.get('User-Agent'),
-        ip: req.ip,
-        contentLength: res.get('Content-Length') ? parseInt(res.get('Content-Length')!) : undefined
+        userAgent: req.get('User-Agent') || 'unknown',
+        ip: req.ip || 'unknown',
+        ...(res.get('Content-Length') && { contentLength: parseInt(res.get('Content-Length')!) })
       };
 
       // Store metrics
       MetricsMiddleware.addMetric(metricsData);
+
+      // Update Prometheus metrics
+      MetricsMiddleware.httpRequestsTotal
+        .labels(req.method, route, res.statusCode.toString())
+        .inc();
+
+      MetricsMiddleware.httpRequestDuration
+        .labels(req.method, route, res.statusCode.toString())
+        .observe(responseTime / 1000);
 
       // Log slow requests
       if (responseTime > 5000) { // 5 seconds
@@ -68,7 +111,7 @@ export class MetricsMiddleware {
         });
       }
 
-      originalEnd.call(this, chunk, encoding);
+      return originalEnd.call(this, chunk, encoding);
     };
 
     next();
@@ -205,5 +248,9 @@ export class MetricsMiddleware {
     return MetricsMiddleware.metrics.filter(
       metric => metric.timestamp >= cutoff && metric.ip === ip
     );
+  }
+
+  static getPrometheusMetrics(): string {
+    return register.metrics();
   }
 }

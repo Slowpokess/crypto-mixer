@@ -37,8 +37,8 @@ export class Logger {
       level,
       service: this.service,
       message,
-      metadata,
-      error
+      ...(metadata && { metadata }),
+      ...(error && { error })
     };
 
     if (process.env.NODE_ENV === 'production') {

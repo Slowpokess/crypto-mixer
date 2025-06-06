@@ -26,10 +26,9 @@ export class RedisClient {
   }
 
   private loadConfig(): RedisConfig {
-    return {
+    const config: RedisConfig = {
       host: process.env.REDIS_HOST || 'localhost',
       port: parseInt(process.env.REDIS_PORT || '6379'),
-      password: process.env.REDIS_PASSWORD,
       db: parseInt(process.env.REDIS_DB || '0'),
       retryDelayOnFailover: 100,
       enableReadyCheck: false,
@@ -39,6 +38,12 @@ export class RedisClient {
       family: 4,
       keyPrefix: process.env.REDIS_KEY_PREFIX || 'mixer:'
     };
+    
+    if (process.env.REDIS_PASSWORD) {
+      config.password = process.env.REDIS_PASSWORD;
+    }
+    
+    return config;
   }
 
   async connect(): Promise<void> {

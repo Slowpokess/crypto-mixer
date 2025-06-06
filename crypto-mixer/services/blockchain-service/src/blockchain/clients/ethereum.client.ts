@@ -8,19 +8,26 @@ interface EthereumConfig {
 
 export class EthereumClient {
   private provider: ethers.JsonRpcProvider;
-  private config: EthereumConfig;
   private logger: Logger;
 
-  constructor(config: EthereumConfig) {
-    this.config = config;
+  constructor(private config: EthereumConfig) {
     this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
     this.logger = new Logger('EthereumClient');
+    this.logger.info('Ethereum client initialized', { 
+      chainId: config.chainId,
+      rpcUrl: config.rpcUrl.substring(0, 30) + '...' 
+    });
   }
 
   public async connect(): Promise<void> {
     try {
       const network = await this.provider.getNetwork();
       this.logger.info(`Connected to Ethereum network: ${network.name} (${network.chainId})`);
+      
+      // Verify config matches network
+      if (this.config.chainId && Number(network.chainId) !== this.config.chainId) {
+        throw new Error(`Chain ID mismatch: expected ${this.config.chainId}, got ${network.chainId}`);
+      }
     } catch (error) {
       this.logger.error('Failed to connect to Ethereum node:', error as Error);
       throw error;
@@ -88,6 +95,11 @@ export class EthereumClient {
     ];
     
     const contract = new ethers.Contract(tokenAddress, abi, this.provider);
+    
+    if (!contract.balanceOf || !contract.decimals) {
+      throw new Error('Invalid ERC20 contract - missing required methods');
+    }
+    
     const balance = await contract.balanceOf(walletAddress);
     const decimals = await contract.decimals();
     
@@ -110,6 +122,11 @@ export class EthereumClient {
       ];
       
       const contract = new ethers.Contract(tokenAddress, abi, wallet);
+      
+      if (!contract.decimals || !contract.transfer) {
+        throw new Error('Invalid ERC20 contract - missing required methods');
+      }
+      
       const decimals = await contract.decimals();
       const value = ethers.parseUnits(amount, decimals);
       

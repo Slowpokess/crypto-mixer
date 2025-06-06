@@ -45,10 +45,11 @@ export class SecurityMiddleware {
 
       // Block if risk score is too high
       if (req.security.riskScore > 80) {
-        return res.status(403).json({
+        res.status(403).json({
           error: 'Request blocked due to security policy',
           code: 'SECURITY_BLOCK'
         });
+        return;
       }
 
       next();
@@ -78,8 +79,8 @@ export class SecurityMiddleware {
 
     // Check for SQL injection patterns
     const sqlPatterns = [
-      /('|(\\')|(;)|(\\;)|(\|)|(\*)|(%)|(\+)|(--)|(\s)|(/\*)|(\*/)|(@)|(\||;)/,
-      /(union|select|insert|delete|update|drop|create|alter|exec|execute)/i
+      /(';|--|\/\*|\*\/|union|select|insert|delete|update|drop|create|alter|exec|execute)/i,
+      /(\||@|%|\+|\*)/
     ];
 
     const queryString = JSON.stringify(query);
@@ -111,8 +112,6 @@ export class SecurityMiddleware {
   private static validateHeaders(req: SecurityRequest): void {
     // Check for missing or suspicious headers
     const userAgent = req.get('User-Agent');
-    const referer = req.get('Referer');
-    const origin = req.get('Origin');
 
     if (!userAgent) {
       req.security!.riskScore += 20;
@@ -156,7 +155,7 @@ export class SecurityMiddleware {
       /^localhost$/i
     ];
 
-    if (privateIPPatterns.some(pattern => pattern.test(ip))) {
+    if (ip && privateIPPatterns.some(pattern => pattern.test(ip))) {
       const xForwardedFor = req.get('X-Forwarded-For');
       if (xForwardedFor) {
         req.security!.riskScore += 5;
@@ -176,7 +175,7 @@ export class SecurityMiddleware {
     const requests = new Map<string, { count: number; resetTime: number }>();
 
     return (req: Request, res: Response, next: NextFunction): void => {
-      const ip = req.ip;
+      const ip = req.ip || 'unknown';
       const now = Date.now();
       const requestData = requests.get(ip);
 
@@ -212,7 +211,7 @@ export class SecurityMiddleware {
     next();
   };
 
-  static sanitizeInput = (req: Request, res: Response, next: NextFunction): void => {
+  static sanitizeInput = (req: Request, _res: Response, next: NextFunction): void => {
     // Basic input sanitization
     const sanitize = (obj: any): any => {
       if (typeof obj === 'string') {

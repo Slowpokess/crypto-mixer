@@ -83,6 +83,12 @@ class MixerAPIServer {
     // Health check
     this.app.use('/health', new HealthRouter().router);
 
+    // Metrics endpoint for Prometheus
+    this.app.get('/metrics', (_req: Request, res: Response) => {
+      res.set('Content-Type', 'text/plain');
+      res.send(MetricsMiddleware.getPrometheusMetrics());
+    });
+
     // API routes
     this.app.use('/api/v1/mixer', new MixerRouter().router);
 

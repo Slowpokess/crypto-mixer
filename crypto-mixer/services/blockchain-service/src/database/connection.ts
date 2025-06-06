@@ -1,4 +1,4 @@
-import { Pool, PoolClient, QueryResult } from 'pg';
+import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { Logger } from '../utils/logger';
 
 export interface DatabaseConfig {
@@ -81,7 +81,7 @@ export class Database {
     }
   }
 
-  async query<T = any>(text: string, params?: any[]): Promise<QueryResult<T>> {
+  async query<T extends QueryResultRow = any>(text: string, params?: any[]): Promise<QueryResult<T>> {
     if (!this.pool) {
       throw new Error('Database not connected');
     }
