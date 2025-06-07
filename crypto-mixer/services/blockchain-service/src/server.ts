@@ -5,6 +5,8 @@ import { TransactionMonitor } from './monitors/transaction.monitor';
 import { Logger } from './utils/logger';
 import { Database } from './database/connection';
 import { MessageQueue } from './queue/rabbitmq';
+import BlockchainServiceHealthChecker from './monitoring/BlockchainServiceHealthChecker';
+import { HealthCheckUtils } from '../../../backend/utils/monitoring/interfaces/HealthCheckInterface';
 
 class BlockchainService {
   private app: express.Application;
@@ -13,6 +15,7 @@ class BlockchainService {
   private logger: Logger;
   private db: Database;
   private queue: MessageQueue;
+  private healthChecker: BlockchainServiceHealthChecker;
 
   constructor() {
     this.app = express();
@@ -21,6 +24,7 @@ class BlockchainService {
     this.transactionMonitor = new TransactionMonitor();
     this.db = new Database();
     this.queue = new MessageQueue();
+    this.healthChecker = BlockchainServiceHealthChecker.getInstance();
   }
 
   public async start(): Promise<void> {
@@ -31,6 +35,9 @@ class BlockchainService {
       
       // Initialize blockchain connections
       await this.blockchainManager.initialize();
+      
+      // Настраиваем health checker с blockchain manager
+      this.healthChecker.setBlockchainManager(this.blockchainManager);
       
       // Start transaction monitoring
       await this.transactionMonitor.start();
@@ -135,24 +142,125 @@ class BlockchainService {
       }
     });
 
-    // Health check
-    this.app.get('/health', async (_req: Request, res: Response): Promise<void> => {
+    // Health check endpoints
+    this.app.get('/health', HealthCheckUtils.createHealthEndpoint(this.healthChecker));
+    
+    // Detailed health check для blockchain-specific информации
+    this.app.get('/health/detailed', async (_req: Request, res: Response): Promise<void> => {
       try {
-        const dbHealth = await this.db.healthCheck();
-        const queueHealth = await this.queue.healthCheck();
+        const healthStatus = await this.healthChecker.getHealthStatus();
         
-        const isHealthy = dbHealth && queueHealth;
-        
-        res.status(isHealthy ? 200 : 503).json({
-          status: isHealthy ? 'healthy' : 'unhealthy',
-          services: {
-            database: dbHealth,
-            messageQueue: queueHealth
+        // Добавляем blockchain-specific метрики
+        const detailedStatus = {
+          ...healthStatus,
+          blockchainInfo: {
+            connectedCurrencies: Object.keys(healthStatus.details.blockchain?.currencies || {}),
+            totalConnectedNodes: healthStatus.details.blockchain?.connectedNodes || 0,
+            syncStatus: healthStatus.details.blockchain?.syncStatus || 'unknown'
           },
+          systemInfo: {
+            nodeVersion: process.version,
+            platform: process.platform,
+            arch: process.arch,
+            pid: process.pid,
+            memory: process.memoryUsage(),
+            uptime: process.uptime()
+          }
+        };
+        
+        const httpStatus = healthStatus.status === 'healthy' ? 200 :
+                          healthStatus.status === 'warning' ? 200 :
+                          healthStatus.status === 'critical' ? 503 : 500;
+        
+        res.status(httpStatus).json(detailedStatus);
+      } catch (error) {
+        this.logger.error('Detailed health check failed:', error as Error);
+        res.status(500).json({
+          status: 'critical',
+          error: (error as Error).message,
           timestamp: new Date().toISOString()
         });
+      }
+    });
+
+    // Быстрая проверка готовности
+    this.app.get('/ready', async (_req: Request, res: Response): Promise<void> => {
+      try {
+        const healthStatus = await this.healthChecker.getHealthStatus();
+        const isBlockchainReady = healthStatus.details.blockchain?.connectedNodes || 0 > 0;
+        const isDatabaseReady = healthStatus.details.database?.connected || false;
+        
+        if (isBlockchainReady && isDatabaseReady) {
+          res.status(200).json({
+            status: 'ready',
+            timestamp: new Date().toISOString(),
+            service: 'blockchain-service'
+          });
+        } else {
+          res.status(503).json({
+            status: 'not_ready',
+            error: 'Blockchain connections or database not available',
+            timestamp: new Date().toISOString()
+          });
+        }
       } catch (error) {
-        res.status(500).json({ error: (error as Error).message });
+        res.status(503).json({
+          status: 'not_ready',
+          error: 'Health check failed',
+          timestamp: new Date().toISOString()
+        });
+      }
+    });
+
+    // Проверка "живости"
+    this.app.get('/live', (_req: Request, res: Response): void => {
+      res.status(200).json({
+        status: 'alive',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+      });
+    });
+
+    // Метрики для мониторинга
+    this.app.get('/metrics', async (_req: Request, res: Response): Promise<void> => {
+      try {
+        const healthStatus = await this.healthChecker.getHealthStatus();
+        res.set('Content-Type', 'text/plain');
+        
+        // Простые метрики в формате Prometheus
+        let metrics = '';
+        metrics += `# HELP blockchain_service_uptime_seconds Total uptime of the blockchain service\n`;
+        metrics += `# TYPE blockchain_service_uptime_seconds counter\n`;
+        metrics += `blockchain_service_uptime_seconds ${process.uptime()}\n`;
+        
+        metrics += `# HELP blockchain_service_connected_nodes Number of connected blockchain nodes\n`;
+        metrics += `# TYPE blockchain_service_connected_nodes gauge\n`;
+        metrics += `blockchain_service_connected_nodes ${healthStatus.details.blockchain?.connectedNodes || 0}\n`;
+        
+        metrics += `# HELP blockchain_service_pending_transactions Number of pending transactions\n`;
+        metrics += `# TYPE blockchain_service_pending_transactions gauge\n`;
+        metrics += `blockchain_service_pending_transactions ${healthStatus.details.blockchain?.pendingTransactions || 0}\n`;
+        
+        // Метрики по валютам
+        if (healthStatus.details.blockchain?.currencies) {
+          for (const [currency, info] of Object.entries(healthStatus.details.blockchain.currencies)) {
+            const currencyInfo = info as any;
+            metrics += `# HELP blockchain_service_currency_connected Currency connection status\n`;
+            metrics += `# TYPE blockchain_service_currency_connected gauge\n`;
+            metrics += `blockchain_service_currency_connected{currency="${currency}"} ${currencyInfo.connected ? 1 : 0}\n`;
+            
+            if (currencyInfo.lastBlock) {
+              metrics += `# HELP blockchain_service_last_block Last processed block height\n`;
+              metrics += `# TYPE blockchain_service_last_block gauge\n`;
+              metrics += `blockchain_service_last_block{currency="${currency}"} ${currencyInfo.lastBlock}\n`;
+            }
+          }
+        }
+        
+        res.send(metrics);
+      } catch (error) {
+        this.logger.error('Metrics endpoint failed:', error as Error);
+        res.status(500).json({ error: 'Failed to generate metrics' });
       }
     });
   }
@@ -227,10 +335,24 @@ class BlockchainService {
 
   private async shutdown(): Promise<void> {
     this.logger.info('Shutting down blockchain service...');
-    this.transactionMonitor.stop();
-    await this.db.disconnect();
-    await this.queue.disconnect();
-    process.exit(0);
+    
+    try {
+      // Остановка мониторинга транзакций
+      this.transactionMonitor.stop();
+      
+      // Очистка health checker
+      await this.healthChecker.cleanup();
+      
+      // Закрытие подключений
+      await this.db.disconnect();
+      await this.queue.disconnect();
+      
+      this.logger.info('✅ Blockchain service gracefully shut down');
+      process.exit(0);
+    } catch (error) {
+      this.logger.error('❌ Error during shutdown:', error as Error);
+      process.exit(1);
+    }
   }
 }
 

@@ -1,13 +1,44 @@
 import React, { useState, useEffect } from 'react';
+import {
+  Container,
+  Typography,
+  Box,
+  Stepper,
+  Step,
+  StepLabel,
+  Card,
+  CardContent,
+  Alert,
+  Backdrop,
+  CircularProgress,
+  Chip,
+  Fade,
+  Slide,
+  useTheme,
+  useMediaQuery,
+} from '@mui/material';
 import { MixerAPI } from '../services/mixerAPI';
 import CurrencySelector from './CurrencySelector';
 import OutputConfiguration from './OutputConfiguration';
 import MixingStatus from './MixingStatus';
-import ProgressSteps from './ProgressSteps';
 import { validateOutputAddresses, validateAmount } from '../utils/validation';
 import { SUPPORTED_CURRENCIES, APP_CONFIG } from '../config/constants';
+import { themeHelpers } from '../theme/theme';
 
+/**
+ * Главный компонент CryptoMixer с современным Material-UI дизайном
+ * 
+ * РУССКИЙ КОММЕНТАРИЙ: Полностью переписанный компонент с:
+ * - Современным Material-UI интерфейсом
+ * - Адаптивным дизайном для всех устройств
+ * - Плавными анимациями и переходами
+ * - Улучшенной безопасностью и UX
+ * - Профессиональным внешним видом
+ */
 const CryptoMixer = () => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  
   // Application state
   const [step, setStep] = useState(1);
   const [currency, setCurrency] = useState('BTC');
@@ -19,8 +50,21 @@ const CryptoMixer = () => {
   const [error, setError] = useState('');
   const [fees, setFees] = useState({});
   const [status, setStatus] = useState(null);
+  const [fadeIn, setFadeIn] = useState(false);
 
   const api = new MixerAPI();
+
+  // Шаги процесса микширования
+  const steps = [
+    'Выбор валюты и суммы',
+    'Настройка вывода',
+    'Мониторинг процесса'
+  ];
+
+  // Анимация появления при загрузке
+  useEffect(() => {
+    setFadeIn(true);
+  }, []);
 
   // Load initial data and check for existing session
   useEffect(() => {
@@ -192,38 +236,202 @@ const CryptoMixer = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
-      <div className="container mx-auto px-4 py-8 max-w-2xl">
-        {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold mb-4 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+    <Fade in={fadeIn} timeout={1000}>
+      <Container maxWidth="lg" sx={{ py: { xs: 2, md: 4 } }}>
+        {/* Header Section */}
+        <Box sx={{ textAlign: 'center', mb: { xs: 4, md: 6 } }}>
+          <Typography
+            variant="h1"
+            sx={{
+              fontSize: { xs: '2.5rem', md: '3.5rem' },
+              fontWeight: 700,
+              mb: 2,
+              ...themeHelpers.gradientText(),
+            }}
+          >
             CryptoMixer
-          </h1>
-          <p className="text-gray-400">
-            Anonymous cryptocurrency mixing service
-          </p>
-        </div>
+          </Typography>
+          <Typography
+            variant="h5"
+            sx={{
+              color: 'text.secondary',
+              fontWeight: 300,
+              mb: 3,
+              fontSize: { xs: '1.1rem', md: '1.25rem' },
+            }}
+          >
+            Анонимный сервис микширования криптовалют
+          </Typography>
+          
+          {/* Security Features */}
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'center',
+              flexWrap: 'wrap',
+              gap: 1,
+              mb: 4,
+            }}
+          >
+            <Chip
+              label="🚫 Без логов"
+              variant="outlined"
+              size="small"
+              sx={{ borderColor: 'success.main', color: 'success.main' }}
+            />
+            <Chip
+              label="🔒 Без KYC"
+              variant="outlined"
+              size="small"
+              sx={{ borderColor: 'primary.main', color: 'primary.main' }}
+            />
+            <Chip
+              label="🧅 Tor дружелюбно"
+              variant="outlined"
+              size="small"
+              sx={{ borderColor: 'secondary.main', color: 'secondary.main' }}
+            />
+            <Chip
+              label="⚡ Быстро и надёжно"
+              variant="outlined"
+              size="small"
+              sx={{ borderColor: 'warning.main', color: 'warning.main' }}
+            />
+          </Box>
+        </Box>
 
-        {/* Progress Steps */}
-        <ProgressSteps currentStep={step} />
+        {/* Progress Stepper */}
+        <Box sx={{ mb: { xs: 3, md: 4 } }}>
+          <Stepper
+            activeStep={step - 1}
+            orientation={isMobile ? 'vertical' : 'horizontal'}
+            sx={{
+              '& .MuiStepConnector-line': {
+                borderColor: 'rgba(124, 58, 237, 0.3)',
+              },
+            }}
+          >
+            {steps.map((label, index) => (
+              <Step key={label}>
+                <StepLabel
+                  sx={{
+                    '& .MuiStepLabel-label': {
+                      color: 'text.secondary',
+                      fontSize: { xs: '0.875rem', md: '1rem' },
+                    },
+                    '& .MuiStepLabel-label.Mui-active': {
+                      color: 'primary.main',
+                      fontWeight: 600,
+                    },
+                    '& .MuiStepLabel-label.Mui-completed': {
+                      color: 'success.main',
+                    },
+                  }}
+                >
+                  {label}
+                </StepLabel>
+              </Step>
+            ))}
+          </Stepper>
+        </Box>
 
-        {/* Main Content */}
-        <div className="bg-gray-800/50 backdrop-blur-sm rounded-2xl p-8 shadow-2xl border border-gray-700">
-          {renderCurrentStep()}
-        </div>
+        {/* Main Content Card */}
+        <Slide direction="up" in={fadeIn} timeout={800}>
+          <Card
+            sx={{
+              ...themeHelpers.glass(0.8),
+              ...themeHelpers.glowShadow(),
+              borderRadius: { xs: 2, md: 4 },
+              backdropFilter: 'blur(20px)',
+              border: '1px solid rgba(124, 58, 237, 0.2)',
+              transition: 'all 0.3s ease',
+              '&:hover': {
+                transform: 'translateY(-4px)',
+                boxShadow: '0px 16px 48px rgba(124, 58, 237, 0.4)',
+              },
+            }}
+          >
+            <CardContent sx={{ p: { xs: 3, md: 4 } }}>
+              {/* Error Alert */}
+              {error && (
+                <Fade in={!!error}>
+                  <Alert
+                    severity="error"
+                    sx={{
+                      mb: 3,
+                      borderRadius: 2,
+                      backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                    }}
+                    onClose={() => setError('')}
+                  >
+                    {error}
+                  </Alert>
+                </Fade>
+              )}
 
-        {/* Footer */}
-        <div className="mt-12 text-center text-sm text-gray-500">
-          <p>No logs • No KYC • Tor friendly</p>
-          <p className="mt-2">
-            Connect via Tor: {' '}
-            <span className="font-mono text-purple-400">
+              {/* Current Step Content */}
+              <Box sx={{ minHeight: { xs: 'auto', md: '400px' } }}>
+                {renderCurrentStep()}
+              </Box>
+            </CardContent>
+          </Card>
+        </Slide>
+
+        {/* Footer Section */}
+        <Box
+          sx={{
+            mt: { xs: 4, md: 6 },
+            textAlign: 'center',
+            color: 'text.secondary',
+          }}
+        >
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            Подключение через Tor:{' '}
+            <Box
+              component="span"
+              sx={{
+                fontFamily: 'monospace',
+                color: 'primary.main',
+                fontWeight: 500,
+              }}
+            >
               xxxxxxxxxxxxxxxx.onion
-            </span>
-          </p>
-        </div>
-      </div>
-    </div>
+            </Box>
+          </Typography>
+          <Typography variant="caption" sx={{ display: 'block' }}>
+            © 2024 CryptoMixer. Приватность и анонимность — наш приоритет.
+          </Typography>
+        </Box>
+
+        {/* Loading Backdrop */}
+        <Backdrop
+          sx={{
+            color: '#fff',
+            zIndex: (theme) => theme.zIndex.drawer + 1,
+            backdropFilter: 'blur(8px)',
+            backgroundColor: 'rgba(15, 15, 35, 0.8)',
+          }}
+          open={loading}
+        >
+          <Box sx={{ textAlign: 'center' }}>
+            <CircularProgress
+              size={60}
+              sx={{
+                color: 'primary.main',
+                mb: 2,
+              }}
+            />
+            <Typography variant="h6" sx={{ color: 'primary.main' }}>
+              Обработка запроса...
+            </Typography>
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              Пожалуйста, подождите
+            </Typography>
+          </Box>
+        </Backdrop>
+      </Container>
+    </Fade>
   );
 };
 

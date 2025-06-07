@@ -10,7 +10,23 @@ export const validateAddress = (address, currency) => {
     },
     ETH: /^0x[a-fA-F0-9]{40}$/,
     USDT: /^0x[a-fA-F0-9]{40}$/, // USDT on Ethereum
-    SOL: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
+    SOL: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,
+    LTC: {
+      legacy: /^[LM][a-km-zA-HJ-NP-Z1-9]{26,33}$/,  // Legacy P2PKH starts with L
+      p2sh: /^[M3][a-km-zA-HJ-NP-Z1-9]{26,33}$/,    // P2SH starts with M or 3
+      bech32: /^ltc1[a-z0-9]{39,59}$/,              // Bech32 starts with ltc1
+      testnet: /^[mn2][a-km-zA-HJ-NP-Z1-9]{26,33}$/ // Testnet
+    },
+    DASH: {
+      mainnet: /^X[1-9A-HJ-NP-Za-km-z]{33}$/,       // Dash mainnet starts with X
+      testnet: /^[y][a-km-zA-HJ-NP-Z1-9]{33}$/      // Dash testnet starts with y
+    },
+    ZEC: {
+      transparent: /^t1[a-km-zA-HJ-NP-Z1-9]{33}$/,   // Transparent addresses start with t1
+      multisig: /^t3[a-km-zA-HJ-NP-Z1-9]{33}$/,      // Multisig addresses start with t3
+      sprout: /^zc[a-km-zA-HJ-NP-Z1-9]{93}$/,        // Sprout shielded addresses start with zc
+      sapling: /^zs[a-km-zA-HJ-NP-Z1-9]{76}$/        // Sapling shielded addresses start with zs
+    }
   };
 
   const patterns = addressPatterns[currency];

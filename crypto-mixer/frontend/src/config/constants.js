@@ -1,5 +1,5 @@
 // Application constants
-export const SUPPORTED_CURRENCIES = ['BTC', 'ETH', 'USDT', 'SOL'];
+export const SUPPORTED_CURRENCIES = ['BTC', 'ETH', 'USDT', 'SOL', 'LTC', 'DASH', 'ZEC'];
 
 export const CURRENCY_CONFIG = {
   BTC: {
@@ -37,6 +37,33 @@ export const CURRENCY_CONFIG = {
     maxAmount: 1000,
     defaultFee: 1.0,
     confirmationsRequired: 1
+  },
+  LTC: {
+    name: 'Litecoin',
+    symbol: 'LTC',
+    decimals: 8,
+    minAmount: 0.01,
+    maxAmount: 100,
+    defaultFee: 1.2,
+    confirmationsRequired: 3
+  },
+  DASH: {
+    name: 'Dash',
+    symbol: 'DASH',
+    decimals: 8,
+    minAmount: 0.01,
+    maxAmount: 100,
+    defaultFee: 1.0,
+    confirmationsRequired: 2
+  },
+  ZEC: {
+    name: 'Zcash',
+    symbol: 'ZEC',
+    decimals: 8,
+    minAmount: 0.001,
+    maxAmount: 50,
+    defaultFee: 1.3,
+    confirmationsRequired: 5
   }
 };
 

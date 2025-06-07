@@ -1,0 +1,121 @@
+# ================================================================
+# CRYPTO MIXER BACKEND - PRODUCTION DOCKERFILE
+# ================================================================
+# RUSSIAN: Многоэтапный Docker build для максимальной безопасности
+# Используем минимальные образы и принцип наименьших привилегий
+
+# ================================================================
+# STAGE 1: БАЗОВЫЙ ОБРАЗ С БЕЗОПАСНЫМИ НАСТРОЙКАМИ
+# ================================================================
+FROM node:18-alpine AS base
+
+# RUSSIAN: Устанавливаем пользователя без root привилегий
+RUN addgroup -g 1001 -S mixer && \
+    adduser -S mixer -u 1001 -G mixer
+
+# RUSSIAN: Обновляем систему и устанавливаем только необходимые пакеты
+RUN apk update && \
+    apk upgrade && \
+    apk add --no-cache \
+        dumb-init \
+        curl \
+        ca-certificates && \
+    rm -rf /var/cache/apk/*
+
+# RUSSIAN: Настраиваем рабочую директорию с правильными правами
+WORKDIR /app
+RUN chown mixer:mixer /app
+
+# ================================================================
+# STAGE 2: УСТАНОВКА ЗАВИСИМОСТЕЙ
+# ================================================================
+FROM base AS deps
+
+# RUSSIAN: Переключаемся на безопасного пользователя
+USER mixer
+
+# RUSSIAN: Копируем только файлы зависимостей для эффективного кэширования
+COPY --chown=mixer:mixer package*.json ./
+
+# RUSSIAN: Устанавливаем только production зависимости с проверкой целостности
+RUN npm ci --only=production --ignore-scripts && \
+    npm cache clean --force
+
+# RUSSIAN: Создаем отдельную установку для build зависимостей
+FROM base AS build-deps
+USER mixer
+COPY --chown=mixer:mixer package*.json ./
+RUN npm ci --ignore-scripts && \
+    npm cache clean --force
+
+# ================================================================
+# STAGE 3: СБОРКА ПРИЛОЖЕНИЯ
+# ================================================================
+FROM build-deps AS builder
+
+# RUSSIAN: Копируем исходный код
+COPY --chown=mixer:mixer . .
+
+# RUSSIAN: Компилируем TypeScript в production режиме
+RUN npm run build
+
+# RUSSIAN: Удаляем source files, оставляем только compiled код
+RUN rm -rf src/ && \
+    rm -rf tests/ && \
+    rm -rf *.ts && \
+    rm -rf tsconfig.json
+
+# ================================================================
+# STAGE 4: FINAL PRODUCTION IMAGE
+# ================================================================
+FROM base AS production
+
+# RUSSIAN: Создаем необходимые директории с правильными правами
+RUN mkdir -p /app/logs /app/tmp /app/uploads && \
+    chown -R mixer:mixer /app
+
+# RUSSIAN: Переключаемся на безопасного пользователя
+USER mixer
+
+# RUSSIAN: Копируем production зависимости
+COPY --from=deps --chown=mixer:mixer /app/node_modules ./node_modules
+
+# RUSSIAN: Копируем собранное приложение
+COPY --from=builder --chown=mixer:mixer /app/dist ./dist
+COPY --from=builder --chown=mixer:mixer /app/package*.json ./
+
+# RUSSIAN: Создаем директории для секретов (будут mounted как volumes)
+RUN mkdir -p /app/secrets /app/ssl && \
+    chmod 700 /app/secrets /app/ssl
+
+# RUSSIAN: Настраиваем переменные окружения для production
+ENV NODE_ENV=production \
+    NODE_OPTIONS="--max-old-space-size=2048" \
+    MALLOC_ARENA_MAX=2 \
+    MALLOC_MMAP_THRESHOLD_=131072 \
+    MALLOC_TRIM_THRESHOLD_=131072 \
+    MALLOC_TOP_PAD_=131072 \
+    MALLOC_MMAP_MAX_=65536
+
+# RUSSIAN: Настраиваем health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:${API_PORT:-5000}/health || exit 1
+
+# RUSSIAN: Экспонируем порт
+EXPOSE 5000
+
+# RUSSIAN: Настраиваем entrypoint с dumb-init для правильной обработки сигналов
+ENTRYPOINT ["dumb-init", "--"]
+
+# RUSSIAN: Запускаем приложение
+CMD ["node", "dist/server.js"]
+
+# ================================================================
+# SECURITY LABELS
+# ================================================================
+LABEL maintainer="crypto-mixer-team" \
+      version="1.0.0" \
+      description="Crypto Mixer Backend - Production Ready" \
+      security.scan="enabled" \
+      security.non-root="true" \
+      security.secrets="external"

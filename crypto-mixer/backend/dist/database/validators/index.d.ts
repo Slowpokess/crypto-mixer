@@ -1,0 +1,50 @@
+import { ValidationChain } from 'express-validator';
+import { CurrencyType } from '../types';
+/**
+ * Валидаторы для API запросов
+ */
+export declare const validateCreateMixRequest: ValidationChain[];
+export declare const validateUpdateMixRequestStatus: ValidationChain[];
+export declare const validateGetMixRequest: ValidationChain[];
+export declare const validateListMixRequests: ValidationChain[];
+export declare const validateCreateWallet: ValidationChain[];
+export declare const validateUpdateWalletBalance: ValidationChain[];
+export declare const validateWalletAddress: ValidationChain[];
+export declare const validateCreateTransactionPool: ValidationChain[];
+export declare const validateJoinPool: ValidationChain[];
+export declare const validateCreateOutputTransaction: ValidationChain[];
+export declare const validateUpdateOutputTransaction: ValidationChain[];
+export declare const validateCreateMonitoredAddress: ValidationChain[];
+export declare const validateCreateSystemConfig: ValidationChain[];
+export declare const validateUpdateSystemConfig: ValidationChain[];
+export declare const validateUUID: ValidationChain[];
+export declare const validatePagination: ValidationChain[];
+export declare const validateDateRange: ValidationChain[];
+export declare const validateCryptocurrencyAddress: (currency: CurrencyType) => ValidationChain;
+export declare const validateOutputPercentagesSum: ValidationChain;
+export declare const validatePoolAmountRange: ValidationChain[];
+export declare const validatePoolParticipantsRange: ValidationChain[];
+declare const _default: {
+    validateCreateMixRequest: ValidationChain[];
+    validateUpdateMixRequestStatus: ValidationChain[];
+    validateGetMixRequest: ValidationChain[];
+    validateListMixRequests: ValidationChain[];
+    validateCreateWallet: ValidationChain[];
+    validateUpdateWalletBalance: ValidationChain[];
+    validateWalletAddress: ValidationChain[];
+    validateCreateTransactionPool: ValidationChain[];
+    validateJoinPool: ValidationChain[];
+    validatePoolAmountRange: ValidationChain[];
+    validatePoolParticipantsRange: ValidationChain[];
+    validateCreateOutputTransaction: ValidationChain[];
+    validateUpdateOutputTransaction: ValidationChain[];
+    validateCreateMonitoredAddress: ValidationChain[];
+    validateCreateSystemConfig: ValidationChain[];
+    validateUpdateSystemConfig: ValidationChain[];
+    validateUUID: ValidationChain[];
+    validatePagination: ValidationChain[];
+    validateDateRange: ValidationChain[];
+    validateCryptocurrencyAddress: (currency: CurrencyType) => ValidationChain;
+    validateOutputPercentagesSum: ValidationChain;
+};
+export default _default;

@@ -1,15 +1,40 @@
 # security/tor/torrc
-# Tor Configuration for Crypto Mixer
+# Расширенная конфигурация Tor для Crypto Mixer
+# РУССКИЙ КОММЕНТАРИЙ: Полная продакшн конфигурация с множественными hidden services
 
-# Basic Tor configuration
-SocksPort 0.0.0.0:9050 IsolateDestAddr IsolateDestPort
-ControlPort 0.0.0.0:9051
+# Основная конфигурация Tor с расширенными настройками
+SocksPort 0.0.0.0:9050 IsolateDestAddr IsolateDestPort IsolateClientAuth IsolateSOCKSAuth
+SocksPort 0.0.0.0:9051 IsolateDestAddr IsolateDestPort # Дополнительный порт для blockchain клиентов
+SocksPort 0.0.0.0:9052 IsolateDestAddr IsolateDestPort # Порт для API запросов
+ControlPort 0.0.0.0:9053
 HashedControlPassword 16:872860B76453A77D60CA2BB8C1A7042072093276A3D701AD684053EC4C
 
-# Hidden service configuration
-HiddenServiceDir /var/lib/tor/mixer_service/
+# Основной hidden service для веб-интерфейса
+HiddenServiceDir /var/lib/tor/mixer_web/
 HiddenServicePort 80 nginx:8080
-HiddenServicePort 443 nginx:8080
+HiddenServicePort 443 nginx:8443
+HiddenServiceMaxStreams 500
+HiddenServiceMaxStreamsCloseCircuit 1
+
+# Hidden service для API (отдельный onion адрес для API)
+HiddenServiceDir /var/lib/tor/mixer_api/
+HiddenServicePort 80 mixer-api:3000
+HiddenServicePort 443 mixer-api:3443
+HiddenServiceMaxStreams 200
+HiddenServiceMaxStreamsCloseCircuit 1
+
+# Hidden service для админ панели (отдельный безопасный адрес)
+HiddenServiceDir /var/lib/tor/mixer_admin/
+HiddenServicePort 80 admin-dashboard:4000
+HiddenServicePort 443 admin-dashboard:4443
+HiddenServiceMaxStreams 50
+HiddenServiceMaxStreamsCloseCircuit 1
+
+# Hidden service для мониторинга (только для технических целей)
+HiddenServiceDir /var/lib/tor/mixer_monitoring/
+HiddenServicePort 80 monitoring-service:5000
+HiddenServiceMaxStreams 10
+HiddenServiceMaxStreamsCloseCircuit 1
 
 # Directory authorities
 DirReqStatistics 0
@@ -39,15 +64,47 @@ IsolateClientProtocol 1
 IsolateDestAddr 1
 IsolateDestPort 1
 
-# Security hardening
+# Расширенные настройки безопасности для продакшна
 DisableAllSwap 1
 HardwareAccel 1
 SafeLogging 1
 AvoidDiskWrites 1
+DisableDebuggerAttachment 1
+KeepBindCapabilities 0
+CapabilitiesClearOnly 1
 
-# Bandwidth limits (adjust as needed)
-BandwidthRate 1 MB
-BandwidthBurst 2 MB
+# Оптимизированные лимиты пропускной способности для продакшна
+BandwidthRate 10 MB
+BandwidthBurst 20 MB
+RelayBandwidthRate 5 MB
+RelayBandwidthBurst 10 MB
+
+# Расширенные настройки изоляции для максимальной анонимности
+IsolateClientAuth 1
+IsolateClientProtocol 1
+IsolateDestAddr 1
+IsolateDestPort 1
+IsolateSOCKSAuth 1
+SessionGroup 1
+
+# Настройки для защиты от traffic analysis
+ConnLimit 1000
+ConnDirectionStatistics 0
+HiddenServiceStatistics 0
+ExtraInfoStatistics 0
+
+# Предотвращение корреляции трафика
+PathBiasCircThreshold 20
+PathBiasNoticeRate 0.70
+PathBiasWarnRate 0.85
+PathBiasExtremeRate 0.95
+
+# Расширенная защита hidden services
+HiddenServiceEnableIntroDoSDefense 1
+HiddenServiceDoSDefenseType 1
+HiddenServicePoWDefenseType 1
+HiddenServiceNumIntroductionPoints 6
+HiddenServiceDirGroupReadable 0
 
 # Entry/Exit policies
 ExitPolicy reject *:*

@@ -1,0 +1,1084 @@
+# ================================================================
+# CRYPTO MIXER - PRODUCTION DOCKER COMPOSE
+# ================================================================
+# RUSSIAN: Production-ready конфигурация с максимальной безопасностью
+# Версия: 2.0.0 - Обновлено с системой управления секретами
+# Дата обновления: 2025-01-06
+# Особенности: Docker Secrets, Multi-stage builds, Health checks, 
+#              Security hardening, Resource limits, Monitoring
+
+version: '3.8'
+
+# Безопасные секреты через Docker Secrets
+secrets:
+  # Секреты базы данных
+  db_password:
+    external: true
+    name: mixer_db_password
+  db_replication_password:
+    external: true
+    name: mixer_db_replication_password
+  
+  # Секреты Redis
+  redis_password:
+    external: true
+    name: mixer_redis_password
+  
+  # Секреты RabbitMQ
+  rabbitmq_password:
+    external: true
+    name: mixer_rabbitmq_password
+  
+  # Секреты Kong
+  kong_db_password:
+    external: true
+    name: mixer_kong_db_password
+  
+  # Секреты приложения
+  jwt_secret:
+    external: true
+    name: mixer_jwt_secret
+  encryption_key:
+    external: true
+    name: mixer_encryption_key
+  master_key:
+    external: true
+    name: mixer_master_key
+  
+  # Секреты HSM
+  hsm_pin:
+    external: true
+    name: mixer_hsm_pin
+  
+  # Секреты блокчейнов
+  btc_rpc_password:
+    external: true
+    name: mixer_btc_rpc_password
+  eth_private_key:
+    external: true
+    name: mixer_eth_private_key
+  sol_private_key:
+    external: true
+    name: mixer_sol_private_key
+  
+  # Секреты мониторинга
+  grafana_admin_password:
+    external: true
+    name: mixer_grafana_admin_password
+  
+  # SSL сертификаты
+  ssl_certificate:
+    external: true
+    name: mixer_ssl_certificate
+  ssl_private_key:
+    external: true
+    name: mixer_ssl_private_key
+  
+  # Vault секреты
+  vault_unseal_key:
+    external: true
+    name: mixer_vault_unseal_key
+  vault_root_token:
+    external: true
+    name: mixer_vault_root_token
+
+# Конфигурации для сетей
+networks:
+  # Основная сеть для всех сервисов
+  mixer-internal:
+    driver: overlay
+    attachable: false
+    encrypted: true
+    driver_opts:
+      com.docker.network.driver.mtu: 1450
+    ipam:
+      config:
+        - subnet: 10.10.0.0/16
+  
+  # Сеть для frontend-сервисов (DMZ)
+  mixer-frontend:
+    driver: overlay
+    attachable: false
+    encrypted: true
+    ipam:
+      config:
+        - subnet: 10.20.0.0/16
+  
+  # Сеть для мониторинга
+  mixer-monitoring:
+    driver: overlay
+    attachable: false
+    encrypted: true
+    ipam:
+      config:
+        - subnet: 10.30.0.0/16
+  
+  # Изолированная сеть для критических сервисов
+  mixer-secure:
+    driver: overlay
+    attachable: false
+    encrypted: true
+    ipam:
+      config:
+        - subnet: 10.40.0.0/16
+
+# Постоянные тома с шифрованием
+volumes:
+  # Данные PostgreSQL Master с шифрованием
+  postgres-master-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,encryption=on
+      device: /opt/mixer/data/postgres-master
+  
+  postgres-slave-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,encryption=on
+      device: /opt/mixer/data/postgres-slave
+  
+  # Данные Redis с шифрованием
+  redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,encryption=on
+      device: /opt/mixer/data/redis
+  
+  # Данные RabbitMQ
+  rabbitmq-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,encryption=on
+      device: /opt/mixer/data/rabbitmq
+  
+  # Критические ключи с максимальной защитой
+  blockchain-keys:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,encryption=on,mode=0700
+      device: /opt/mixer/secure/blockchain-keys
+  
+  wallet-keys:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,encryption=on,mode=0700
+      device: /opt/mixer/secure/wallet-keys
+  
+  # Логи
+  app-logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/mixer/logs
+  
+  # Мониторинг данные
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  loki-data:
+    driver: local
+  
+  # Vault данные
+  vault-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,encryption=on,mode=0700
+      device: /opt/mixer/secure/vault
+
+services:
+  # ===== БАЗЫ ДАННЫХ =====
+  
+  # PostgreSQL Master с максимальной безопасностью
+  postgres-master:
+    image: postgres:16.1-alpine3.19
+    container_name: mixer-postgres-master
+    hostname: postgres-master
+    user: "999:999"  # postgres пользователь
+    restart: unless-stopped
+    
+    environment:
+      POSTGRES_DB: mixer_db
+      POSTGRES_USER: mixer_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_REPLICATION_MODE: master
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD_FILE: /run/secrets/db_replication_password
+      
+      # Безопасность PostgreSQL
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=peer"
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      
+    secrets:
+      - db_password
+      - db_replication_password
+    
+    volumes:
+      - postgres-master-data:/var/lib/postgresql/data:Z
+      - /opt/mixer/config/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro,Z
+      - /opt/mixer/config/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro,Z
+      - app-logs:/var/log/postgresql:Z
+    
+    networks:
+      mixer-internal:
+        aliases:
+          - postgres-master.mixer.local
+    
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.tier == database
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+        window: 60s
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mixer_user -d mixer_db -h localhost"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:unconfined
+    
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /var/run/postgresql:noexec,nosuid,size=100m
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
+        max-file: "5"
+        labels: "service=postgres-master,environment=production"
+
+  # PostgreSQL Slave (реплика для чтения)
+  postgres-slave:
+    image: postgres:16.1-alpine3.19
+    container_name: mixer-postgres-slave
+    hostname: postgres-slave
+    user: "999:999"
+    restart: unless-stopped
+    
+    environment:
+      POSTGRES_MASTER_SERVICE: postgres-master
+      POSTGRES_REPLICATION_MODE: slave
+      POSTGRES_MASTER_PORT: 5432
+      POSTGRES_USER: mixer_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD_FILE: /run/secrets/db_replication_password
+    
+    secrets:
+      - db_password
+      - db_replication_password
+    
+    volumes:
+      - postgres-slave-data:/var/lib/postgresql/data:Z
+      - app-logs:/var/log/postgresql:Z
+    
+    networks:
+      mixer-internal:
+        aliases:
+          - postgres-slave.mixer.local
+    
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.tier == database
+      resources:
+        limits:
+          memory: 3G
+          cpus: '1.5'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mixer_user -h localhost"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+
+  # ===== КЭШИРОВАНИЕ И ОЧЕРЕДИ =====
+  
+  # Redis Master с authentication
+  redis-master:
+    image: redis:7.2.3-alpine3.19
+    container_name: mixer-redis-master
+    hostname: redis-master
+    user: "999:999"
+    restart: unless-stopped
+    
+    command: >
+      redis-server
+      --requirepass-file /run/secrets/redis_password
+      --appendonly yes
+      --appendfsync everysec
+      --auto-aof-rewrite-percentage 100
+      --auto-aof-rewrite-min-size 64mb
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 60
+      --timeout 300
+      --tcp-backlog 511
+      --databases 16
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --rdbcompression yes
+      --rdbchecksum yes
+      --stop-writes-on-bgsave-error yes
+      --dir /data
+    
+    secrets:
+      - redis_password
+    
+    volumes:
+      - redis-data:/data:Z
+      - app-logs:/var/log/redis:Z
+    
+    networks:
+      mixer-internal:
+        aliases:
+          - redis-master.mixer.local
+    
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.tier == cache
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "$$(cat /run/secrets/redis_password)", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+
+  # RabbitMQ с кластеризацией
+  rabbitmq:
+    image: rabbitmq:3.12.10-management-alpine
+    container_name: mixer-rabbitmq
+    hostname: rabbitmq
+    restart: unless-stopped
+    
+    environment:
+      RABBITMQ_DEFAULT_USER: mixer
+      RABBITMQ_DEFAULT_PASS_FILE: /run/secrets/rabbitmq_password
+      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: 0.7
+      RABBITMQ_DISK_FREE_LIMIT: 2147483648  # 2GB
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "+S 2:2"
+      RABBITMQ_CTL_ERL_ARGS: "-proto_dist inet_tls"
+      RABBITMQ_MANAGEMENT_SSL_VERIFY: verify_peer
+      RABBITMQ_MANAGEMENT_SSL_FAIL_IF_NO_PEER_CERT: "true"
+    
+    secrets:
+      - rabbitmq_password
+    
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq:Z
+      - /opt/mixer/config/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro,Z
+      - /opt/mixer/config/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro,Z
+      - app-logs:/var/log/rabbitmq:Z
+    
+    networks:
+      mixer-internal:
+        aliases:
+          - rabbitmq.mixer.local
+    
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.tier == messaging
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 60s
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+
+  # ===== МИКРОСЕРВИСЫ КРИПТОМИКСЕРА =====
+  
+  # Основной API микросервис с production безопасностью
+  mixer-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.production
+      target: production
+    image: mixer/api:${VERSION:-latest}
+    deploy:
+      mode: replicated
+      replicas: 3
+      placement:
+        constraints:
+          - node.labels.tier == application
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 60s
+      update_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: rollback
+        order: start-first
+    
+    environment:
+      NODE_ENV: production
+      API_PORT: 5000
+      
+      # Подключение к базе данных
+      DB_HOST: postgres-master.mixer.local
+      DB_PORT: 5432
+      DB_NAME: mixer_db
+      DB_USER: mixer_user
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      DB_SSL: "require"
+      DB_POOL_MIN: 5
+      DB_POOL_MAX: 20
+      
+      # Redis конфигурация
+      REDIS_HOST: redis-master.mixer.local
+      REDIS_PORT: 6379
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      REDIS_DB: 0
+      REDIS_CLUSTER_MODE: "false"
+      
+      # RabbitMQ
+      RABBITMQ_HOST: rabbitmq.mixer.local
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: mixer
+      RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq_password
+      RABBITMQ_VHOST: /mixer
+      
+      # Система безопасности - НОВЫЕ настройки
+      SECURITY_ENABLED: "true"
+      RATE_LIMIT_GLOBAL: 2000
+      RATE_LIMIT_MIX: 5
+      RATE_LIMIT_LOGIN: 10
+      RATE_LIMIT_USER: 100
+      RATE_LIMIT_CRITICAL: 10
+      DDOS_PROTECTION_ENABLED: "true"
+      DDOS_SENSITIVITY: adaptive
+      DDOS_RPS_THRESHOLD: 100
+      DDOS_IP_RPS_THRESHOLD: 20
+      DDOS_CONCURRENT_CONNECTIONS: 1000
+      DDOS_UNIQUE_IPS_THRESHOLD: 500
+      DDOS_ERROR_RATE: 10
+      DDOS_PAYLOAD_SIZE: 1048576
+      DDOS_REQUEST_DURATION: 30000
+      DDOS_BLOCK_DURATION: 300
+      EMERGENCY_MODE_ENABLED: "true"
+      EMERGENCY_ATTACKS_THRESHOLD: 50
+      EMERGENCY_BLOCKED_IPS_THRESHOLD: 100
+      EMERGENCY_ACTION: throttle
+      
+      # Мониторинг безопасности
+      SECURITY_MONITORING_ENABLED: "true"
+      SECURITY_ALERTING_ENABLED: "true"
+      MONITORING_ENABLED: "true"
+      PROMETHEUS_ENABLED: "true"
+      HEALTH_CHECK_ENABLED: "true"
+      
+      # Безопасность
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
+      
+      # Логирование
+      LOG_LEVEL: info
+      LOG_FORMAT: json
+      
+      # SSL/TLS
+      SSL_ENABLED: "true"
+      SSL_CERT_PATH: /run/secrets/ssl_certificate
+      SSL_KEY_PATH: /run/secrets/ssl_private_key
+      
+      # Интеграции
+      BLOCKCHAIN_SERVICE_URL: http://blockchain-service.mixer.local:3001
+      WALLET_SERVICE_URL: http://wallet-service.mixer.local:3003
+      VAULT_ADDR: http://vault.mixer.local:8200
+      VAULT_ENABLED: "true"
+      
+    secrets:
+      - db_password
+      - redis_password
+      - rabbitmq_password
+      - jwt_secret
+      - encryption_key
+    
+    volumes:
+      - app-logs:/app/logs:Z
+      - /opt/mixer/config/app:/app/config:ro,Z
+    
+    networks:
+      - mixer-internal
+      - mixer-frontend
+    
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+        labels: "service=mixer-api,environment=production"
+
+  # Сервис блокчейн интеграций
+  blockchain-service:
+    image: mixer/blockchain:${VERSION:-latest}
+    deploy:
+      mode: replicated
+      replicas: 2
+      placement:
+        constraints:
+          - node.labels.tier == application
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.5'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      
+      # База данных
+      DB_HOST: postgres-master.mixer.local
+      DB_PORT: 5432
+      DB_NAME: mixer_db
+      DB_USER: mixer_user
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      
+      # Redis
+      REDIS_HOST: redis-master.mixer.local
+      REDIS_PORT: 6379
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      
+      # RabbitMQ
+      RABBITMQ_HOST: rabbitmq.mixer.local
+      RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq_password
+      
+      # Блокчейн подключения
+      BTC_NODE_HOST: ${BTC_NODE_HOST}
+      BTC_RPC_USER: ${BTC_RPC_USER}
+      BTC_RPC_PASSWORD_FILE: /run/secrets/btc_rpc_password
+      ETH_RPC_URL: ${ETH_RPC_URL}
+      SOL_RPC_URL: ${SOL_RPC_URL}
+      TRON_API_URL: ${TRON_API_URL}
+      
+    secrets:
+      - db_password
+      - redis_password
+      - rabbitmq_password
+      - btc_rpc_password
+      - eth_private_key
+      - sol_private_key
+    
+    volumes:
+      - blockchain-keys:/app/keys:ro,Z
+      - app-logs:/app/logs:Z
+    
+    networks:
+      - mixer-internal
+    
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 20s
+      timeout: 15s
+      retries: 3
+    
+    security_opt:
+      - no-new-privileges:true
+
+  # Сервис управления кошельками с HSM
+  wallet-service:
+    image: mixer/wallet:${VERSION:-latest}
+    deploy:
+      mode: replicated
+      replicas: 1  # Единственная реплика для HSM
+      placement:
+        constraints:
+          - node.labels.hsm == true
+          - node.labels.tier == secure
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    environment:
+      NODE_ENV: production
+      PORT: 3003
+      
+      # База данных
+      DB_HOST: postgres-master.mixer.local
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      
+      # Redis
+      REDIS_HOST: redis-master.mixer.local
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      
+      # HSM конфигурация
+      HSM_ENABLED: "true"
+      HSM_LIBRARY_PATH: /usr/lib/libpkcs11.so
+      HSM_PIN_FILE: /run/secrets/hsm_pin
+      HSM_SLOT: 0
+      
+      # Мастер ключ
+      MASTER_KEY_FILE: /run/secrets/master_key
+      
+    secrets:
+      - db_password
+      - redis_password
+      - hsm_pin
+      - master_key
+    
+    volumes:
+      - wallet-keys:/app/keys:Z
+      - /dev/bus/usb:/dev/bus/usb:ro  # Доступ к HSM через USB
+      - app-logs:/app/logs:Z
+    
+    networks:
+      - mixer-secure
+    
+    privileged: true  # Необходимо для доступа к HSM устройству
+    
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    
+    security_opt:
+      - apparmor:unconfined  # Для HSM доступа
+
+  # Планировщик операций
+  scheduler-service:
+    image: mixer/scheduler:${VERSION:-latest}
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.tier == application
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+    
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      DB_HOST: postgres-master.mixer.local
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_HOST: redis-master.mixer.local
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      RABBITMQ_HOST: rabbitmq.mixer.local
+      RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq_password
+    
+    secrets:
+      - db_password
+      - redis_password
+      - rabbitmq_password
+    
+    volumes:
+      - app-logs:/app/logs:Z
+    
+    networks:
+      - mixer-internal
+    
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===== FRONTEND И PROXY =====
+  
+  # Nginx как reverse proxy и балансировщик
+  nginx:
+    image: nginx:1.25.3-alpine-slim
+    deploy:
+      mode: replicated
+      replicas: 2
+      placement:
+        constraints:
+          - node.labels.tier == frontend
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+    
+    volumes:
+      - /opt/mixer/config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro,Z
+      - /opt/mixer/config/nginx/sites-enabled:/etc/nginx/sites-enabled:ro,Z
+      - /opt/mixer/config/nginx/ssl:/etc/nginx/ssl:ro,Z
+      - app-logs:/var/log/nginx:Z
+    
+    secrets:
+      - ssl_certificate
+      - ssl_private_key
+    
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: ingress
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: ingress
+    
+    networks:
+      - mixer-frontend
+    
+    depends_on:
+      - mixer-api
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    
+    security_opt:
+      - no-new-privileges:true
+
+  # ===== МОНИТОРИНГ И ЛОГИРОВАНИЕ =====
+  
+  # HashiCorp Vault для управления секретами
+  vault:
+    image: vault:1.15.4
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.tier == secure
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+    
+    environment:
+      VAULT_ADDR: http://0.0.0.0:8200
+      VAULT_LOCAL_CONFIG: >
+        {
+          "backend": {
+            "file": {
+              "path": "/vault/data"
+            }
+          },
+          "listener": {
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "tls_disable": true
+            }
+          },
+          "ui": true,
+          "cluster_name": "mixer-vault",
+          "log_level": "INFO"
+        }
+    
+    secrets:
+      - vault_unseal_key
+      - vault_root_token
+    
+    volumes:
+      - vault-data:/vault/data:Z
+      - app-logs:/vault/logs:Z
+    
+    networks:
+      - mixer-secure
+    
+    cap_add:
+      - IPC_LOCK
+    
+    command: vault server -config=/vault/config
+    
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    
+    security_opt:
+      - no-new-privileges:true
+
+  # Prometheus для метрик
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.tier == monitoring
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+    
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--storage.tsdb.retention.size=15GB'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+      - '--log.level=info'
+    
+    volumes:
+      - /opt/mixer/config/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
+      - /opt/mixer/config/monitoring/alerts:/etc/prometheus/alerts:ro,Z
+      - prometheus-data:/prometheus:Z
+    
+    networks:
+      - mixer-monitoring
+      - mixer-internal
+    
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    
+    security_opt:
+      - no-new-privileges:true
+
+  # Grafana для визуализации
+  grafana:
+    image: grafana/grafana:10.2.2
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.tier == monitoring
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+    
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_INSTALL_PLUGINS: "grafana-clock-panel,grafana-simple-json-datasource,grafana-piechart-panel"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "https://monitor.mixer.local"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
+    
+    secrets:
+      - grafana_admin_password
+    
+    volumes:
+      - grafana-data:/var/lib/grafana:Z
+      - /opt/mixer/config/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro,Z
+      - /opt/mixer/config/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro,Z
+    
+    networks:
+      - mixer-monitoring
+    
+    depends_on:
+      - prometheus
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    
+    security_opt:
+      - no-new-privileges:true
+
+  # Loki для логирования
+  loki:
+    image: grafana/loki:2.9.2
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.tier == monitoring
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+    
+    command: -config.file=/etc/loki/local-config.yaml
+    
+    volumes:
+      - /opt/mixer/config/monitoring/loki-config.yml:/etc/loki/local-config.yaml:ro,Z
+      - loki-data:/loki:Z
+    
+    networks:
+      - mixer-monitoring
+    
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    
+    security_opt:
+      - no-new-privileges:true
+
+  # Promtail для сбора логов
+  promtail:
+    image: grafana/promtail:2.9.2
+    deploy:
+      mode: global  # На каждом узле
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+    
+    command: -config.file=/etc/promtail/config.yml
+    
+    volumes:
+      - /opt/mixer/config/monitoring/promtail-config.yml:/etc/promtail/config.yml:ro,Z
+      - app-logs:/var/log/app:ro
+      - /var/log:/var/log/host:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    
+    networks:
+      - mixer-monitoring
+    
+    depends_on:
+      - loki
+    
+    security_opt:
+      - no-new-privileges:true
+
+# Конфигурация для Docker Swarm
+configs:
+  nginx_config:
+    external: true
+    name: mixer_nginx_config_v1
+  
+  postgres_config:
+    external: true
+    name: mixer_postgres_config_v1
+  
+  prometheus_config:
+    external: true
+    name: mixer_prometheus_config_v1
