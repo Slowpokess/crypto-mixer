@@ -70,14 +70,10 @@ class EnhancedMixController {
                 id: (0, uuid_1.v4)(),
                 currency,
                 amount,
-                inputAddresses: [], // Будет заполнено позже
                 outputAddresses: outputAddresses.map(addr => ({
                     address: addr.address,
                     amount: (amount * addr.percentage) / 100
-                })),
-                sessionId: req.sessionID || (0, uuid_1.v4)(),
-                ipAddress: clientIP,
-                userAgent
+                }))
             });
             if (!securityCheck.isValid) {
                 this.logger.warn('Запрос на микширование не прошел проверку безопасности', {
@@ -391,9 +387,10 @@ class EnhancedMixController {
     }
     async generateSecureDepositAddress(currency) {
         // Используем HSM Manager для безопасной генерации
-        const keyResult = await this.hsmManager.generateKey('secp256k1', currency, 'signing');
-        // Генерируем адрес из публичного ключа
-        const address = await this.deriveAddressFromPublicKey(keyResult.publicKey, currency);
+        const keyResult = await this.hsmManager.generateKey('secp256k1');
+        // Получаем публичный ключ и генерируем адрес
+        const publicKey = await this.hsmManager.getPublicKey(keyResult.keyId);
+        const address = await this.deriveAddressFromPublicKey(publicKey.toString('hex'), currency);
         return {
             address,
             keyId: keyResult.keyId,
@@ -509,12 +506,20 @@ class EnhancedMixController {
         // Добавляем запрос в очередь движка микширования
         await this.mixingEngine.enqueueMixRequest({
             id: mixRequest.id,
-            sessionId: mixRequest.sessionId,
             currency: mixRequest.currency,
             amount: mixRequest.inputAmount,
-            outputAddresses: mixRequest.outputAddresses,
-            anonymityLevel: mixRequest.anonymityLevel,
-            algorithm: mixRequest.mixingAlgorithm
+            inputAddresses: [mixRequest.inputAddress],
+            outputAddresses: mixRequest.outputAddresses.map((addr) => ({
+                address: addr.address,
+                percentage: addr.percentage,
+                amount: (mixRequest.inputAmount * addr.percentage) / 100
+            })),
+            strategy: 'COINJOIN',
+            algorithm: mixRequest.mixingAlgorithm || 'COINJOIN',
+            priority: 'NORMAL',
+            delay: mixRequest.delayMinutes,
+            createdAt: new Date(),
+            status: 'PENDING'
         });
         this.logger.info('Процесс микширования инициирован', {
             sessionId: mixRequest.sessionId,
@@ -537,7 +542,7 @@ class EnhancedMixController {
     isValidAddress(address, currency) {
         // Здесь должна быть реальная валидация адресов для каждой криптовалюты
         // Пока используем простую проверку
-        return address && address.length > 10;
+        return Boolean(address && address.length > 10);
     }
     canCancelMixRequest(status) {
         return ['PENDING_DEPOSIT', 'DEPOSIT_RECEIVED'].includes(status);

@@ -1,0 +1,390 @@
+version: '3.8'
+
+# Расширенная конфигурация Docker Compose для кластера Tor instances
+# РУССКИЙ КОММЕНТАРИЙ: Полная продакшн конфигурация с множественными Tor узлами:
+# - Primary и backup Tor instances
+# - Geographical distribution через разные регионы
+# - Автоматическое failover между instances
+# - Shared volumes для onion addresses
+# - Health checks и automatic restart
+# - Load balancing для hidden services
+
+services:
+  # Primary Tor Instance
+  tor-primary:
+    build:
+      context: ../services/tor-proxy
+      dockerfile: Dockerfile
+    container_name: cryptomixer-tor-primary
+    hostname: tor-primary
+    restart: unless-stopped
+    environment:
+      - TOR_INSTANCE_ID=primary
+      - TOR_REGION=primary
+      - TOR_CONTROL_PASSWORD=${TOR_CONTROL_PASSWORD:-$(openssl rand -base64 32)}
+      - TOR_SOCKS_PORT=9050
+      - TOR_CONTROL_PORT=9053
+    ports:
+      - "9050:9050"  # SOCKS proxy
+      - "9051:9051"  # Additional SOCKS for blockchain
+      - "9052:9052"  # Additional SOCKS for API
+      - "9053:9053"  # Control port
+    volumes:
+      - tor_primary_data:/var/lib/tor
+      - tor_primary_logs:/var/log/tor
+      - tor_shared:/shared
+      - ../security/tor/torrc:/etc/tor/torrc:ro
+    networks:
+      - tor-cluster
+      - mixer-internal
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9050"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    user: "tor:tor"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Backup Tor Instance 1 (EU Region)
+  tor-backup1:
+    build:
+      context: ../services/tor-proxy
+      dockerfile: Dockerfile
+    container_name: cryptomixer-tor-backup1
+    hostname: tor-backup1
+    restart: unless-stopped
+    environment:
+      - TOR_INSTANCE_ID=backup1
+      - TOR_REGION=eu
+      - TOR_CONTROL_PASSWORD=${TOR_CONTROL_PASSWORD:-$(openssl rand -base64 32)}
+      - TOR_SOCKS_PORT=9060
+      - TOR_CONTROL_PORT=9063
+    ports:
+      - "9060:9060"  # SOCKS proxy
+      - "9061:9061"  # Additional SOCKS for blockchain
+      - "9062:9062"  # Additional SOCKS for API
+      - "9063:9063"  # Control port
+    volumes:
+      - tor_backup1_data:/var/lib/tor
+      - tor_backup1_logs:/var/log/tor
+      - tor_shared:/shared
+      - ../security/tor/torrc-backup1:/etc/tor/torrc:ro
+    networks:
+      - tor-cluster
+      - mixer-internal
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9060"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    user: "tor:tor"
+    depends_on:
+      - tor-primary
+
+  # Backup Tor Instance 2 (US Region)
+  tor-backup2:
+    build:
+      context: ../services/tor-proxy
+      dockerfile: Dockerfile
+    container_name: cryptomixer-tor-backup2
+    hostname: tor-backup2
+    restart: unless-stopped
+    environment:
+      - TOR_INSTANCE_ID=backup2
+      - TOR_REGION=us
+      - TOR_CONTROL_PASSWORD=${TOR_CONTROL_PASSWORD:-$(openssl rand -base64 32)}
+      - TOR_SOCKS_PORT=9070
+      - TOR_CONTROL_PORT=9073
+    ports:
+      - "9070:9070"  # SOCKS proxy
+      - "9071:9071"  # Additional SOCKS for blockchain
+      - "9072:9072"  # Additional SOCKS for API
+      - "9073:9073"  # Control port
+    volumes:
+      - tor_backup2_data:/var/lib/tor
+      - tor_backup2_logs:/var/log/tor
+      - tor_shared:/shared
+      - ../security/tor/torrc-backup2:/etc/tor/torrc:ro
+    networks:
+      - tor-cluster
+      - mixer-internal
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9070"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    user: "tor:tor"
+    depends_on:
+      - tor-primary
+
+  # Emergency Tor Instance (Asia Region)
+  tor-emergency:
+    build:
+      context: ../services/tor-proxy
+      dockerfile: Dockerfile
+    container_name: cryptomixer-tor-emergency
+    hostname: tor-emergency
+    restart: unless-stopped
+    environment:
+      - TOR_INSTANCE_ID=emergency
+      - TOR_REGION=asia
+      - TOR_CONTROL_PASSWORD=${TOR_CONTROL_PASSWORD:-$(openssl rand -base64 32)}
+      - TOR_SOCKS_PORT=9080
+      - TOR_CONTROL_PORT=9083
+    ports:
+      - "9080:9080"  # SOCKS proxy
+      - "9081:9081"  # Additional SOCKS for blockchain
+      - "9082:9082"  # Additional SOCKS for API
+      - "9083:9083"  # Control port
+    volumes:
+      - tor_emergency_data:/var/lib/tor
+      - tor_emergency_logs:/var/log/tor
+      - tor_shared:/shared
+      - ../security/tor/torrc-emergency:/etc/tor/torrc:ro
+    networks:
+      - tor-cluster
+      - mixer-internal
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    user: "tor:tor"
+    depends_on:
+      - tor-primary
+    profiles:
+      - emergency  # Запускается только при необходимости
+
+  # Tor Load Balancer / Proxy
+  tor-lb:
+    image: haproxy:alpine
+    container_name: cryptomixer-tor-lb
+    hostname: tor-lb
+    restart: unless-stopped
+    ports:
+      - "9090:9090"  # Load balanced SOCKS
+      - "9093:9093"  # Load balanced control
+      - "8080:8080"  # HAProxy stats
+    volumes:
+      - ./haproxy-tor.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      - tor-cluster
+      - mixer-internal
+    depends_on:
+      - tor-primary
+      - tor-backup1
+      - tor-backup2
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9090"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # Tor Cluster Monitor
+  tor-monitor:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      target: tor-monitor
+    container_name: cryptomixer-tor-monitor
+    hostname: tor-monitor
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - TOR_MONITORING_ENABLED=true
+      - TOR_REDUNDANCY_ENABLED=true
+      - TOR_CLUSTER_NODES=tor-primary:9053,tor-backup1:9063,tor-backup2:9073,tor-emergency:9083
+    volumes:
+      - tor_shared:/shared
+      - tor_monitor_logs:/var/log/monitor
+    networks:
+      - tor-cluster
+      - mixer-internal
+    depends_on:
+      - tor-primary
+      - tor-backup1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Tor Metrics Exporter для Prometheus
+  tor-exporter:
+    image: quay.io/thoai/tor-exporter:latest
+    container_name: cryptomixer-tor-exporter
+    hostname: tor-exporter
+    restart: unless-stopped
+    environment:
+      - TOR_CONTROL_HOST=tor-primary
+      - TOR_CONTROL_PORT=9053
+      - TOR_CONTROL_PASSWORD=${TOR_CONTROL_PASSWORD}
+    ports:
+      - "9130:9130"  # Prometheus metrics
+    networks:
+      - tor-cluster
+      - mixer-internal
+    depends_on:
+      - tor-primary
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9130/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# Volumes для хранения данных Tor instances
+volumes:
+  tor_primary_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/cryptomixer/data/tor/primary
+  
+  tor_primary_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/cryptomixer/logs/tor/primary
+
+  tor_backup1_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/cryptomixer/data/tor/backup1
+  
+  tor_backup1_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/cryptomixer/logs/tor/backup1
+
+  tor_backup2_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/cryptomixer/data/tor/backup2
+  
+  tor_backup2_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/cryptomixer/logs/tor/backup2
+
+  tor_emergency_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/cryptomixer/data/tor/emergency
+  
+  tor_emergency_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/cryptomixer/logs/tor/emergency
+
+  tor_shared:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/cryptomixer/shared/tor
+
+  tor_monitor_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/cryptomixer/logs/tor-monitor
+
+# Networks
+networks:
+  tor-cluster:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+    driver_opts:
+      com.docker.network.bridge.name: tor-cluster
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+
+  mixer-internal:
+    external: true  # Подключается к основной сети mixer
+
+# Дополнительные конфигурации
+x-tor-common: &tor-common
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  cap_add:
+    - SETUID
+    - SETGID
+  user: "tor:tor"
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+# Healthcheck по умолчанию для Tor services
+x-tor-healthcheck: &tor-healthcheck
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 60s

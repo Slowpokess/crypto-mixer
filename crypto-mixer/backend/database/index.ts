@@ -109,10 +109,12 @@ export class DatabaseSystem {
           ? this.optimizationSuite.getRedisOptimizedRepositories()
           : this.optimizationSuite.getOptimizedRepositories();
           
-        this.repositories = {
-          ...initializeRepositories(this.models),
-          ...optimizedRepos
-        };
+        // Создаем базовый контейнер репозиториев
+        const baseRepositories = initializeRepositories(this.models);
+        
+        // Объединяем с оптимизированными репозиториями, сохраняя методы класса
+        Object.assign(baseRepositories, optimizedRepos);
+        this.repositories = baseRepositories;
         console.log('✅ Optimization suite initialized');
         console.log('✅ Optimized repositories initialized');
       } else {

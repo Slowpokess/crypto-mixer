@@ -511,7 +511,7 @@ export class HealthCheckUtils {
         });
       });
 
-      socket.on('error', (error) => {
+      socket.on('error', (error: Error) => {
         clearTimeout(timer);
         socket.destroy();
         resolve({

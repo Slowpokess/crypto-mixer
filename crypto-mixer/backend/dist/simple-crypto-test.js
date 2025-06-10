@@ -68,7 +68,7 @@ function testAddressValidation() {
     console.log('\n🚀 Тестирование валидации адресов...');
     const testAddresses = {
         LTC: {
-            valid: ['LdP8Qox1VAhCzLJNqrr74YovaWYyNBUWvL', 'ltc1qw508d6qejxtdg4y5r3zarvary0c5xw7k'],
+            valid: ['LdP8Qox1VAhCzLJNqrr74YovaWYyNBUWvL', 'ltc1q8c6fshw2dlwun7ekn9qwf37cu2rn755upcp6el'],
             invalid: ['1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa', 'invalid_address']
         },
         DASH: {
@@ -158,6 +158,7 @@ function testCurrencyConfigs() {
             networkFee: 0.0001
         }
     };
+    let allConfigsValid = true;
     Object.entries(currencyConfigs).forEach(([currency, config]) => {
         console.log(`   ➤ Проверка конфигурации ${currency}...`);
         if (config.decimals === 8) {
@@ -165,24 +166,24 @@ function testCurrencyConfigs() {
         }
         else {
             console.log(`   ❌ ${currency} неправильное количество decimals`);
-            return false;
+            allConfigsValid = false;
         }
         if (config.minAmount > 0 && config.maxAmount > config.minAmount) {
             console.log(`   ✅ ${currency} имеет корректные лимиты (${config.minAmount} - ${config.maxAmount})`);
         }
         else {
             console.log(`   ❌ ${currency} некорректные лимиты`);
-            return false;
+            allConfigsValid = false;
         }
         if (config.confirmations > 0) {
             console.log(`   ✅ ${currency} требует ${config.confirmations} подтверждений`);
         }
         else {
             console.log(`   ❌ ${currency} неправильное количество подтверждений`);
-            return false;
+            allConfigsValid = false;
         }
     });
-    return true;
+    return allConfigsValid;
 }
 /**
  * Основная функция тестирования

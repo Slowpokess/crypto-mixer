@@ -1,0 +1,340 @@
+# Production ConfigMaps для Crypto Mixer
+
+# Основная конфигурация приложения
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mixer-config
+  namespace: crypto-mixer
+  labels:
+    app: crypto-mixer
+data:
+  # Основные настройки
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  
+  # База данных
+  DB_HOST: "postgres-service"
+  DB_PORT: "5432"
+  DB_NAME: "mixer_db"
+  DB_SSL: "require"
+  DB_POOL_MIN: "10"
+  DB_POOL_MAX: "50"
+  DB_TIMEOUT: "30000"
+  
+  # Redis
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_CLUSTER_MODE: "false"
+  REDIS_CONNECTION_TIMEOUT: "5000"
+  REDIS_COMMAND_TIMEOUT: "3000"
+  
+  # RabbitMQ
+  RABBITMQ_HOST: "rabbitmq-service"
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_VHOST: "crypto-mixer"
+  RABBITMQ_HEARTBEAT: "60"
+  RABBITMQ_CONNECTION_TIMEOUT: "10000"
+  
+  # Microservices URLs
+  BLOCKCHAIN_SERVICE_URL: "http://blockchain-service:3001"
+  SCHEDULER_SERVICE_URL: "http://scheduler-service:3002"
+  WALLET_SERVICE_URL: "http://wallet-service:3003"
+  MONITORING_SERVICE_URL: "http://monitoring-service:3004"
+  
+  # Mixing Configuration
+  MIXING_ENABLED: "true"
+  DEFAULT_MIXING_ROUNDS: "3"
+  MAX_MIXING_ROUNDS: "10"
+  MIN_PARTICIPANTS: "3"
+  MAX_PARTICIPANTS: "100"
+  DEFAULT_ANONYMITY_LEVEL: "MEDIUM"
+  
+  # Fee Configuration
+  BASE_FEE_PERCENTAGE: "0.5"
+  NETWORK_FEE_MULTIPLIER: "1.5"
+  HIGH_ANONYMITY_FEE_MULTIPLIER: "2.0"
+  
+  # Security Settings
+  RATE_LIMITING_ENABLED: "true"
+  DDOS_PROTECTION_ENABLED: "true"
+  IP_WHITELIST_ENABLED: "false"
+  GEOBLOCKING_ENABLED: "true"
+  AML_CHECKS_ENABLED: "true"
+  
+  # Timeouts and Limits
+  REQUEST_TIMEOUT: "30000"
+  MAX_REQUEST_SIZE: "10mb"
+  SESSION_TIMEOUT: "3600000"
+  DEPOSIT_TIMEOUT: "7200000"
+  
+  # Monitoring
+  PROMETHEUS_ENABLED: "true"
+  PROMETHEUS_PORT: "9090"
+  HEALTH_CHECK_INTERVAL: "30000"
+  
+  # Tor Configuration
+  TOR_ENABLED: "true"
+  TOR_PROXY_HOST: "tor-proxy-service"
+  TOR_PROXY_PORT: "9050"
+  TOR_CONTROL_PORT: "9051"
+
+---
+# Blockchain конфигурация
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blockchain-config
+  namespace: crypto-mixer
+  labels:
+    app: crypto-mixer
+    component: blockchain
+data:
+  # Bitcoin
+  BTC_ENABLED: "true"
+  BTC_NETWORK: "mainnet"
+  BTC_MIN_CONFIRMATIONS: "3"
+  BTC_FEE_RATE: "10"
+  BTC_DUST_LIMIT: "546"
+  
+  # Ethereum
+  ETH_ENABLED: "true"
+  ETH_NETWORK: "mainnet"
+  ETH_CHAIN_ID: "1"
+  ETH_MIN_CONFIRMATIONS: "12"
+  ETH_GAS_LIMIT: "21000"
+  ETH_GAS_PRICE_MULTIPLIER: "1.2"
+  
+  # USDT (ERC-20)
+  USDT_ENABLED: "true"
+  USDT_CONTRACT_ADDRESS: "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+  USDT_DECIMALS: "6"
+  
+  # Solana
+  SOL_ENABLED: "true"
+  SOL_NETWORK: "mainnet-beta"
+  SOL_MIN_CONFIRMATIONS: "20"
+  SOL_COMMITMENT: "confirmed"
+  
+  # Litecoin
+  LTC_ENABLED: "true"
+  LTC_NETWORK: "mainnet"
+  LTC_MIN_CONFIRMATIONS: "3"
+  LTC_FEE_RATE: "10"
+  
+  # Dash
+  DASH_ENABLED: "true"
+  DASH_NETWORK: "mainnet"
+  DASH_MIN_CONFIRMATIONS: "2"
+  DASH_INSTANTSEND_ENABLED: "true"
+  
+  # Zcash
+  ZEC_ENABLED: "true"
+  ZEC_NETWORK: "mainnet"
+  ZEC_MIN_CONFIRMATIONS: "5"
+  ZEC_SHIELDED_ENABLED: "true"
+  
+  # Block explorers
+  BTC_EXPLORER_URL: "https://blockstream.info/api"
+  ETH_EXPLORER_URL: "https://api.etherscan.io/api"
+  SOL_EXPLORER_URL: "https://public-api.solscan.io"
+  LTC_EXPLORER_URL: "https://api.blockcypher.com/v1/ltc/main"
+
+---
+# Мониторинг конфигурация
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-config
+  namespace: crypto-mixer
+  labels:
+    app: crypto-mixer
+    component: monitoring
+data:
+  monitoring.yaml: |
+    monitoring:
+      enabled: true
+      interval: 30s
+      retention: 30d
+      
+    metrics:
+      enabled: true
+      port: 9090
+      path: /metrics
+      
+    alerts:
+      enabled: true
+      cpu_threshold: 80
+      memory_threshold: 85
+      disk_threshold: 90
+      response_time_threshold: 2000ms
+      error_rate_threshold: 5%
+      
+    notifications:
+      enabled: true
+      channels:
+        - slack
+        - email
+        - telegram
+        - pagerduty
+      
+    health_checks:
+      enabled: true
+      interval: 30s
+      timeout: 5s
+      endpoints:
+        - /health
+        - /ready
+        - /metrics
+        
+    dashboards:
+      auto_create: true
+      templates:
+        - crypto-mixer-overview
+        - services-health
+        - security-dashboard
+        - business-metrics
+        - blockchain-status
+
+---
+# Nginx конфигурация для Frontend
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: crypto-mixer
+  labels:
+    app: frontend
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid /var/run/nginx.pid;
+    
+    events {
+        worker_connections 1024;
+        use epoll;
+        multi_accept on;
+    }
+    
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+        
+        # Логирование
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for"';
+        access_log /var/log/nginx/access.log main;
+        
+        # Оптимизация
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        
+        # Безопасность
+        server_tokens off;
+        add_header X-Frame-Options DENY;
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+        add_header Strict-Transport-Security "max-age=31536000; includeSubdomains; preload";
+        
+        # Gzip
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml+rss application/json;
+        
+        # Rate limiting
+        limit_req_zone $binary_remote_addr zone=main:10m rate=10r/s;
+        
+        server {
+            listen 80;
+            server_name _;
+            root /usr/share/nginx/html;
+            index index.html index.htm;
+            
+            # Rate limiting
+            limit_req zone=main burst=20 nodelay;
+            
+            # Health check
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+            
+            location /ready {
+                access_log off;
+                return 200 "ready\n";
+                add_header Content-Type text/plain;
+            }
+            
+            # Static files
+            location / {
+                try_files $uri $uri/ /index.html;
+                expires 1h;
+                add_header Cache-Control "public, immutable";
+            }
+            
+            # API proxy
+            location /api {
+                proxy_pass http://mixer-api-service:3000;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection 'upgrade';
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_cache_bypass $http_upgrade;
+                
+                # Timeouts
+                proxy_connect_timeout 30s;
+                proxy_send_timeout 30s;
+                proxy_read_timeout 30s;
+            }
+            
+            # Security headers for API
+            location /api {
+                add_header X-Frame-Options DENY;
+                add_header X-Content-Type-Options nosniff;
+                add_header X-XSS-Protection "1; mode=block";
+            }
+        }
+    }
+
+---
+# Grafana Dashboard конфигурация
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: crypto-mixer
+  labels:
+    app: grafana
+data:
+  crypto-mixer-overview.json: |
+    {
+      "dashboard": {
+        "title": "Crypto Mixer Overview",
+        "panels": [
+          {
+            "title": "Active Mixing Requests",
+            "type": "stat"
+          },
+          {
+            "title": "Transaction Volume",
+            "type": "graph"
+          },
+          {
+            "title": "Service Health",
+            "type": "table"
+          }
+        ]
+      }
+    }

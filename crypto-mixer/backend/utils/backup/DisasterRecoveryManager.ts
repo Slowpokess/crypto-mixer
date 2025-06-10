@@ -175,6 +175,7 @@ export interface ComponentHealth {
 export class DisasterRecoveryManager {
   private config: DisasterRecoveryConfig;
   private backupManager: BackupManager;
+  private dbManager?: DatabaseManager; // Опциональная зависимость для database операций
   private isMonitoring: boolean = false;
   private monitoringInterval: NodeJS.Timeout | null = null;
   private activeRecoveries: Map<string, RecoveryExecution> = new Map();
@@ -184,9 +185,10 @@ export class DisasterRecoveryManager {
   private consecutiveFailures: number = 0;
   private lastRecoveryTime: Date | null = null;
 
-  constructor(config: DisasterRecoveryConfig, backupManager: BackupManager) {
+  constructor(config: DisasterRecoveryConfig, backupManager: BackupManager, dbManager?: DatabaseManager) {
     this.config = config;
     this.backupManager = backupManager;
+    this.dbManager = dbManager; // Инжектируем DatabaseManager если доступен
     this.loadRecoveryPlans();
   }
 
@@ -222,7 +224,9 @@ export class DisasterRecoveryManager {
       
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
-      await enhancedDbLogger.logError(error);
+      // Правильная типизация error для логгера
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      await enhancedDbLogger.logError(errorToLog);
       throw error;
     }
   }
@@ -288,7 +292,9 @@ export class DisasterRecoveryManager {
       
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
-      await enhancedDbLogger.logError(error);
+      // Правильная типизация error для логгера
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      await enhancedDbLogger.logError(errorToLog);
       
       return {
         overall: 'down',
@@ -392,7 +398,9 @@ export class DisasterRecoveryManager {
       
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
-      await enhancedDbLogger.logError(error);
+      // Правильная типизация error для логгера
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      await enhancedDbLogger.logError(errorToLog);
       throw error;
     }
   }
@@ -479,7 +487,9 @@ export class DisasterRecoveryManager {
     } catch (error) {
       execution.status = 'failed';
       execution.errors.push(String(error));
-      await enhancedDbLogger.logError(error);
+      // Правильная типизация error для логгера
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      await enhancedDbLogger.logError(errorToLog);
       return execution;
     } finally {
       this.activeRecoveries.delete(executionId);
@@ -649,7 +659,9 @@ export class DisasterRecoveryManager {
       
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
-      await enhancedDbLogger.logError(error);
+      // Правильная типизация error для логгера
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      await enhancedDbLogger.logError(errorToLog);
       throw error;
     }
   }
@@ -810,13 +822,31 @@ export class DisasterRecoveryManager {
     });
   }
 
+  /**
+   * Проверка здоровья базы данных
+   */
   private async checkDatabaseHealth(): Promise<ComponentHealth> {
     try {
-      const dbManager = DatabaseManager.getInstance();
+      let dbManager = this.dbManager;
+      
+      // Если DatabaseManager не инжектирован, создаем новый с конфигурацией по умолчанию
+      if (!dbManager) {
+        const dbConfig = {
+          host: process.env.DB_HOST || 'localhost',
+          port: parseInt(process.env.DB_PORT || '5432'),
+          database: process.env.DB_NAME || 'crypto_mixer',
+          username: process.env.DB_USER || 'postgres',
+          password: process.env.DB_PASSWORD || '',
+          dialect: 'postgres' as const,
+          logging: false
+        };
+        dbManager = new DatabaseManager(dbConfig);
+      }
+      
       const startTime = Date.now();
       
-      // Простая проверка подключения
-      await dbManager.getConnection().authenticate();
+      // Простая проверка подключения через выполнение тестового запроса
+      await dbManager.query('SELECT 1 as health_check');
       
       return {
         status: 'healthy',
@@ -826,11 +856,12 @@ export class DisasterRecoveryManager {
         details: 'Database connection successful'
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         status: 'down',
         lastChecked: new Date(),
         errorCount: 1,
-        details: `Database error: ${error}`
+        details: `Database error: ${errorMessage}`
       };
     }
   }
@@ -1064,13 +1095,37 @@ export class DisasterRecoveryManager {
         return true;
         
       case 'database_query':
-        // Выполнение SQL запроса
+        // Выполнение SQL запроса для валидации
         if (step.query) {
           try {
-            const dbManager = DatabaseManager.getInstance();
-            await dbManager.query(step.query);
+            let dbManager = this.dbManager;
+            
+            // Если DatabaseManager не инжектирован, создаем новый
+            if (!dbManager) {
+              const dbConfig = {
+                host: process.env.DB_HOST || 'localhost',
+                port: parseInt(process.env.DB_PORT || '5432'),
+                database: process.env.DB_NAME || 'crypto_mixer',
+                username: process.env.DB_USER || 'postgres',
+                password: process.env.DB_PASSWORD || '',
+                dialect: 'postgres' as const,
+                logging: false
+              };
+              dbManager = new DatabaseManager(dbConfig);
+            }
+            
+            const result = await dbManager.query(step.query);
+            enhancedDbLogger.debug('✅ Validation SQL запрос выполнен успешно', {
+              query: step.query.substring(0, 100) + '...',
+              resultCount: Array.isArray(result) ? result.length : 'N/A'
+            });
             return true;
-          } catch {
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            enhancedDbLogger.error('❌ Ошибка выполнения validation SQL запроса', {
+              query: step.query,
+              error: errorMessage
+            });
             return false;
           }
         }

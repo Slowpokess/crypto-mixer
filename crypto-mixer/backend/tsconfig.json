@@ -1,8 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "commonjs",
-    "lib": ["ES2020"],
+    "module": "commonjs", 
+    "moduleResolution": "node",
+    "lib": ["ES2020", "ES2021.String"],
     "outDir": "./dist",
     "rootDir": "./",
     "strict": true,
@@ -30,11 +31,13 @@
     "noImplicitOverride": false,
     "allowSyntheticDefaultImports": true,
     "isolatedModules": true,
-    "downlevelIteration": true
+    "downlevelIteration": true,
+    "typeRoots": ["node_modules/@types", "types"]
   },
   "include": [
     "**/*.ts",
-    "**/*.js"
+    "**/*.js",
+    "types/**/*.d.ts"
   ],
   "exclude": [
     "node_modules",

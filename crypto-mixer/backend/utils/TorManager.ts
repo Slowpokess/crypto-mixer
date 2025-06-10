@@ -1,10 +1,9 @@
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
-import net from 'net';
-import crypto from 'crypto';
+import * as net from 'net';
 import { EventEmitter } from 'events';
-import { logger } from './logger';
+import { enhancedDbLogger } from './logger';
 
 /**
  * Расширенный менеджер Tor для CryptoMixer
@@ -47,8 +46,8 @@ export class TorManager extends EventEmitter {
   private axiosInstance: AxiosInstance;
   private connectionInfo: TorConnectionInfo;
   private isInitialized = false;
-  private circuitRotationTimer: NodeJS.Timer | null = null;
-  private healthCheckTimer: NodeJS.Timer | null = null;
+  private circuitRotationTimer: NodeJS.Timeout | null = null;
+  private healthCheckTimer: NodeJS.Timeout | null = null;
   private stats = {
     requestCount: 0,
     errorCount: 0,
@@ -97,7 +96,7 @@ export class TorManager extends EventEmitter {
       },
     });
 
-    logger.info('🧅 TorManager инициализирован', {
+    enhancedDbLogger.info('🧅 TorManager инициализирован', {
       enabled: this.config.enabled,
       socksPort: this.config.socksPort,
       controlPort: this.config.controlPort,
@@ -109,12 +108,12 @@ export class TorManager extends EventEmitter {
    */
   public async initialize(): Promise<void> {
     if (!this.config.enabled) {
-      logger.info('🧅 Tor отключен в конфигурации');
+      enhancedDbLogger.info('🧅 Tor отключен в конфигурации');
       return;
     }
 
     try {
-      logger.info('🧅 Инициализация Tor соединения...');
+      enhancedDbLogger.info('🧅 Инициализация Tor соединения...');
 
       // Проверяем доступность Tor
       await this.checkTorAvailability();
@@ -132,14 +131,18 @@ export class TorManager extends EventEmitter {
       this.isInitialized = true;
       this.connectionInfo.isConnected = true;
       
-      logger.info('✅ TorManager успешно инициализирован');
+      enhancedDbLogger.info('✅ TorManager успешно инициализирован');
       this.emit('connected');
 
     } catch (error) {
-      logger.error('❌ Ошибка инициализации TorManager:', error);
-      this.connectionInfo.errors.push(error.message);
-      this.stats.lastError = error;
-      throw error;
+      // Правильная типизация error для безопасного использования
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      
+      enhancedDbLogger.error('❌ Ошибка инициализации TorManager:', { error: errorMessage });
+      this.connectionInfo.errors.push(errorMessage);
+      this.stats.lastError = errorToLog;
+      throw errorToLog;
     }
   }
 
@@ -157,7 +160,7 @@ export class TorManager extends EventEmitter {
       socket.connect(this.config.socksPort, '127.0.0.1', () => {
         clearTimeout(timeout);
         socket.destroy();
-        logger.info(`✅ Tor SOCKS доступен на порту ${this.config.socksPort}`);
+        enhancedDbLogger.info(`✅ Tor SOCKS доступен на порту ${this.config.socksPort}`);
         resolve();
       });
 
@@ -186,9 +189,10 @@ export class TorManager extends EventEmitter {
       // Добавляем interceptors для логирования
       this.setupAxiosInterceptors();
 
-      logger.info('✅ SOCKS агенты созданы успешно');
+      enhancedDbLogger.info('✅ SOCKS агенты созданы успешно');
     } catch (error) {
-      logger.error('❌ Ошибка создания SOCKS агентов:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      enhancedDbLogger.error('❌ Ошибка создания SOCKS агентов:', { error: errorMessage });
       throw error;
     }
   }
@@ -203,14 +207,14 @@ export class TorManager extends EventEmitter {
         this.stats.requestCount++;
         
         // Добавляем случайные заголовки для маскировки
-        config.headers = {
-          ...config.headers,
-          'Accept-Language': this.generateRandomAcceptLanguage(),
-          'DNT': '1',
-          'Upgrade-Insecure-Requests': '1',
-        };
+        // Правильная работа с AxiosHeaders
+        if (config.headers) {
+          config.headers['Accept-Language'] = this.generateRandomAcceptLanguage();
+          config.headers['DNT'] = '1';
+          config.headers['Upgrade-Insecure-Requests'] = '1';
+        }
 
-        logger.debug('🧅 Tor запрос:', { 
+        enhancedDbLogger.debug('🧅 Tor запрос:', { 
           method: config.method, 
           url: config.url,
           headers: config.headers 
@@ -220,7 +224,8 @@ export class TorManager extends EventEmitter {
       },
       (error) => {
         this.stats.errorCount++;
-        logger.error('❌ Ошибка Tor запроса:', error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        enhancedDbLogger.error('❌ Ошибка Tor запроса:', { error: errorMessage });
         return Promise.reject(error);
       }
     );
@@ -228,7 +233,7 @@ export class TorManager extends EventEmitter {
     // Response interceptor
     this.axiosInstance.interceptors.response.use(
       (response) => {
-        logger.debug('✅ Tor ответ получен:', { 
+        enhancedDbLogger.debug('✅ Tor ответ получен:', { 
           status: response.status, 
           url: response.config.url 
         });
@@ -240,7 +245,7 @@ export class TorManager extends EventEmitter {
 
         // Если соединение неудачное, пытаемся сменить цепочку
         if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
-          logger.warn('🔄 Ошибка соединения, ротируем цепочку...');
+          enhancedDbLogger.warn('🔄 Ошибка соединения, ротируем цепочку...');
           await this.rotateCircuit();
         }
 
@@ -261,13 +266,14 @@ export class TorManager extends EventEmitter {
       try {
         const onionAddress = await fs.readFile('/shared/onion-address.txt', 'utf-8');
         this.connectionInfo.onionAddress = onionAddress.trim();
-        logger.info(`🧅 Hidden service адрес: ${this.connectionInfo.onionAddress}`);
+        enhancedDbLogger.info(`🧅 Hidden service адрес: ${this.connectionInfo.onionAddress}`);
       } catch (error) {
-        logger.warn('⚠️ Не удалось получить onion адрес из файла');
+        enhancedDbLogger.warn('⚠️ Не удалось получить onion адрес из файла');
       }
 
     } catch (error) {
-      logger.error('❌ Ошибка получения информации о hidden service:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      enhancedDbLogger.error('❌ Ошибка получения информации о hidden service:', { error: errorMessage });
     }
   }
 
@@ -276,12 +282,12 @@ export class TorManager extends EventEmitter {
    */
   public async rotateCircuit(): Promise<void> {
     if (!this.isInitialized) {
-      logger.warn('⚠️ TorManager не инициализирован');
+      enhancedDbLogger.warn('⚠️ TorManager не инициализирован');
       return;
     }
 
     try {
-      logger.info('🔄 Начинаем ротацию Tor цепочек...');
+      enhancedDbLogger.info('🔄 Начинаем ротацию Tor цепочек...');
 
       // Отправляем сигнал NEWNYM через control port
       await this.sendControlCommand('SIGNAL NEWNYM');
@@ -292,12 +298,13 @@ export class TorManager extends EventEmitter {
       this.connectionInfo.lastCircuitRotation = new Date();
       this.stats.circuitRotations++;
 
-      logger.info('✅ Ротация цепочек завершена');
+      enhancedDbLogger.info('✅ Ротация цепочек завершена');
       this.emit('circuitRotated');
 
     } catch (error) {
-      logger.error('❌ Ошибка ротации цепочек:', error);
-      this.connectionInfo.errors.push(`Circuit rotation failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      enhancedDbLogger.error('❌ Ошибка ротации цепочек:', { error: errorMessage });
+      this.connectionInfo.errors.push(`Circuit rotation failed: ${errorMessage}`);
     }
   }
 
@@ -354,7 +361,8 @@ export class TorManager extends EventEmitter {
       try {
         await this.performHealthCheck();
       } catch (error) {
-        logger.error('❌ Ошибка проверки здоровья Tor:', error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        enhancedDbLogger.error('❌ Ошибка проверки здоровья Tor:', { error: errorMessage });
       }
     }, 30000); // Каждые 30 секунд
   }
@@ -401,9 +409,12 @@ export class TorManager extends EventEmitter {
       this.emit('healthCheck', this.connectionInfo);
 
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorToEmit = error instanceof Error ? error : new Error(String(error));
+      
       this.connectionInfo.isConnected = false;
-      this.connectionInfo.errors.push(`Health check failed: ${error.message}`);
-      this.emit('healthCheckFailed', error);
+      this.connectionInfo.errors.push(`Health check failed: ${errorMessage}`);
+      this.emit('healthCheckFailed', errorToEmit);
     }
   }
 
@@ -485,10 +496,11 @@ export class TorManager extends EventEmitter {
   public async testConnection(url: string = 'https://check.torproject.org/api/ip'): Promise<any> {
     try {
       const response = await this.axiosInstance.get(url);
-      logger.info('✅ Tor тест соединения успешен:', response.data);
+      enhancedDbLogger.info('✅ Tor тест соединения успешен:', response.data);
       return response.data;
     } catch (error) {
-      logger.error('❌ Tor тест соединения неудачен:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      enhancedDbLogger.error('❌ Tor тест соединения неудачен:', { error: errorMessage });
       throw error;
     }
   }
@@ -497,7 +509,7 @@ export class TorManager extends EventEmitter {
    * Остановка TorManager
    */
   public async shutdown(): Promise<void> {
-    logger.info('🛑 Останавливаем TorManager...');
+    enhancedDbLogger.info('🛑 Останавливаем TorManager...');
 
     if (this.healthCheckTimer) {
       clearInterval(this.healthCheckTimer);
@@ -511,7 +523,7 @@ export class TorManager extends EventEmitter {
     this.connectionInfo.isConnected = false;
 
     this.emit('disconnected');
-    logger.info('✅ TorManager остановлен');
+    enhancedDbLogger.info('✅ TorManager остановлен');
   }
 }
 
@@ -521,6 +533,7 @@ export const torManager = new TorManager();
 // Инициализируем при запуске модуля
 if (process.env.NODE_ENV !== 'test') {
   torManager.initialize().catch(error => {
-    logger.error('❌ Ошибка инициализации TorManager:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    enhancedDbLogger.error('❌ Ошибка инициализации TorManager:', { error: errorMessage });
   });
 }

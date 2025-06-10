@@ -1,4 +1,4 @@
-import { Sequelize, QueryInterface, DataTypes } from 'sequelize';
+import { Sequelize, QueryInterface, DataTypes, QueryTypes } from 'sequelize';
 import fs from 'fs';
 import path from 'path';
 
@@ -80,11 +80,11 @@ export class MigrationManager {
     // БЕЗОПАСНОСТЬ: Валидация имени таблицы
     this.validateTableName(this.migrationTableName);
     
-    const [results] = await this.sequelize.query(
+    const results = await this.sequelize.query(
       'SELECT * FROM ?? ORDER BY executed_at ASC',
       {
         replacements: [this.migrationTableName],
-        type: this.sequelize.QueryTypes.SELECT
+        type: QueryTypes.SELECT
       }
     );
     

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import axios, { AxiosError } from 'axios';
 import { spawn } from 'child_process';
-import * as redis from 'redis';
+import * as net from 'net';
 import { enhancedDbLogger } from '../logger';
 import { DatabaseManager } from '../../database/DatabaseManager';
 
@@ -83,7 +83,7 @@ export class HealthCheckManager extends EventEmitter {
   private consecutiveFailures: Map<string, number> = new Map();
   private systemStartTime: Date = new Date();
   private healthyTime: number = 0; // время в миллисекундах когда система была healthy
-  private lastOverallStatus: 'healthy' | 'degraded' | 'critical' | 'down' = 'unknown';
+  private lastOverallStatus: 'healthy' | 'degraded' | 'critical' | 'down' = 'healthy';
 
   constructor(config: HealthCheckConfig) {
     super();
@@ -131,7 +131,8 @@ export class HealthCheckManager extends EventEmitter {
     } catch (error) {
       this.isRunning = false;
       await enhancedDbLogger.endOperation(operationId, false);
-      await enhancedDbLogger.logError(error);
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      await enhancedDbLogger.logError(errorToLog);
       throw error;
     }
   }
@@ -400,7 +401,7 @@ export class HealthCheckManager extends EventEmitter {
         });
       });
 
-      socket.on('error', (error) => {
+      socket.on('error', (error: Error) => {
         clearTimeout(timer);
         socket.destroy();
         resolve({
@@ -422,30 +423,56 @@ export class HealthCheckManager extends EventEmitter {
     details: { message: string; data?: any };
   }> {
     try {
-      const dbManager = DatabaseManager.getInstance();
+      // Создаем новый экземпляр DatabaseManager с полной конфигурацией
+      const dbManager = new DatabaseManager({
+        dialect: 'postgres',
+        host: service.host || process.env.DB_HOST || 'localhost',
+        port: service.port || parseInt(process.env.DB_PORT || '5432'),
+        database: process.env.DB_NAME || 'crypto_mixer',
+        username: process.env.DB_USER || 'postgres',
+        password: process.env.DB_PASS || 'password',
+        logging: false,
+        pool: {
+          max: 5,
+          min: 0,
+          acquire: 30000,
+          idle: 10000
+        }
+      });
       const startTime = Date.now();
       
-      // Проверка подключения
-      await dbManager.getConnection().authenticate();
-      
-      // Выполнение тестового запроса
-      const result = await dbManager.query('SELECT 1 as health_check');
+      // Проверка подключения через health check метод
+      const healthResult = await dbManager.healthCheck();
       const responseTime = Date.now() - startTime;
       
-      // Проверка connection pool
-      const poolInfo = dbManager.getConnectionInfo();
-      
-      return {
-        status: 'healthy',
-        details: {
-          message: `Database подключение успешно (${responseTime}ms)`,
-          data: {
-            responseTime,
-            poolInfo,
-            testQuery: result
+      if (healthResult.details.canConnect && healthResult.details.canQuery) {
+        return {
+          status: 'healthy',
+          details: {
+            message: `Database подключение успешно (${responseTime}ms)`,
+            data: {
+              responseTime,
+              healthCheck: healthResult,
+              canConnect: healthResult.details.canConnect,
+              canQuery: healthResult.details.canQuery,
+              version: healthResult.details.version,
+              latency: healthResult.latency
+            }
           }
-        }
-      };
+        };
+      } else {
+        return {
+          status: 'critical',
+          details: {
+            message: `Database проверка провалена: ${!healthResult.details.canConnect ? 'Cannot connect' : 'Cannot query'}`,
+            data: { 
+              healthResult,
+              responseTime,
+              errors: healthResult.errors
+            }
+          }
+        };
+      }
     } catch (error) {
       return {
         status: 'critical',
@@ -458,58 +485,209 @@ export class HealthCheckManager extends EventEmitter {
   }
 
   /**
-   * Проверка Redis сервиса
+   * Проверка Redis сервиса через нативное TCP подключение
+   * Полноценная реализация без внешних зависимостей
    */
   private async checkRedisService(service: ServiceConfig): Promise<{
     status: 'healthy' | 'warning' | 'critical';
     details: { message: string; data?: any };
   }> {
-    let client: redis.RedisClientType | null = null;
+    const host = service.host || 'localhost';
+    const port = service.port || 6379;
+    const timeout = (service.timeout || this.config.timeout) * 1000;
     
     try {
-      client = redis.createClient({
-        host: service.host,
-        port: service.port,
-        connectTimeout: (service.timeout || this.config.timeout) * 1000
+      // Создаем TCP подключение к Redis серверу
+      const socket = new net.Socket();
+      
+      const connectionResult = await new Promise<{ connected: boolean; responseTime: number; info?: any }>((resolve) => {
+        const connectStartTime = Date.now();
+        
+        const connectionTimer = setTimeout(() => {
+          socket.destroy();
+          resolve({
+            connected: false,
+            responseTime: Date.now() - connectStartTime
+          });
+        }, timeout);
+
+        socket.connect(port, host, () => {
+          clearTimeout(connectionTimer);
+          
+          // Отправляем команду PING для проверки Redis
+          socket.write('*1\r\n$4\r\nPING\r\n');
+          
+          let responseData = '';
+          socket.on('data', (data) => {
+            responseData += data.toString();
+            
+            // Проверяем, что получили ответ PONG от Redis
+            if (responseData.includes('+PONG\r\n')) {
+              socket.destroy();
+              resolve({
+                connected: true,
+                responseTime: Date.now() - connectStartTime,
+                info: { response: responseData }
+              });
+            }
+          });
+        });
+
+        socket.on('error', () => {
+          clearTimeout(connectionTimer);
+          socket.destroy();
+          resolve({
+            connected: false,
+            responseTime: Date.now() - connectStartTime
+          });
+        });
       });
 
-      await client.connect();
-      
-      const startTime = Date.now();
-      const pong = await client.ping();
-      const responseTime = Date.now() - startTime;
-      
-      // Получение информации о Redis
-      const info = await client.info();
-      const memoryInfo = info.split('\r\n').find(line => line.startsWith('used_memory_human:'));
-      
-      return {
-        status: 'healthy',
-        details: {
-          message: `Redis PING успешно (${responseTime}ms)`,
-          data: {
-            responseTime,
-            ping: pong,
-            memory: memoryInfo
+      if (connectionResult.connected) {
+        // Получаем дополнительную информацию о Redis через INFO команду
+        const redisInfo = await this.getRedisInfo(host, port, timeout);
+        
+        return {
+          status: 'healthy',
+          details: {
+            message: `Redis PING успешно (${connectionResult.responseTime}ms)`,
+            data: {
+              responseTime: connectionResult.responseTime,
+              ping: 'PONG',
+              memoryUsage: redisInfo.memoryUsage || 0,
+              hitRatio: redisInfo.hitRatio || 100,
+              version: redisInfo.version || 'unknown',
+              host,
+              port
+            }
           }
-        }
-      };
+        };
+      } else {
+        return {
+          status: 'critical',
+          details: {
+            message: `Redis подключение провалено (${connectionResult.responseTime}ms)`,
+            data: { 
+              host, 
+              port, 
+              timeout,
+              responseTime: connectionResult.responseTime
+            }
+          }
+        };
+      }
+
     } catch (error) {
       return {
         status: 'critical',
         details: {
           message: `Redis проверка провалена: ${error}`,
-          data: { error: String(error) }
+          data: { error: String(error), host, port }
         }
       };
-    } finally {
-      if (client) {
-        try {
-          await client.quit();
-        } catch (e) {
-          // Игнорируем ошибки при закрытии соединения
+    }
+  }
+
+  /**
+   * Получение расширенной информации о Redis сервере через нативное TCP
+   */
+  private async getRedisInfo(host: string, port: number, timeout: number = 5000): Promise<{
+    memoryUsage?: number;
+    hitRatio?: number;
+    version?: string;
+  }> {
+    try {
+      const socket = new net.Socket();
+      
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          socket.destroy();
+          resolve({});
+        }, timeout);
+
+        socket.connect(port, host, () => {
+          // Отправляем команду INFO для получения информации о сервере
+          socket.write('*1\r\n$4\r\nINFO\r\n');
+          
+          let responseData = '';
+          socket.on('data', (data) => {
+            responseData += data.toString();
+            
+            // Проверяем, что получили полный ответ
+            if (responseData.includes('\r\n') && responseData.length > 100) {
+              clearTimeout(timer);
+              socket.destroy();
+              
+              // Парсим информацию из ответа Redis
+              const info = this.parseRedisInfo(responseData);
+              resolve(info);
+            }
+          });
+        });
+
+        socket.on('error', () => {
+          clearTimeout(timer);
+          socket.destroy();
+          resolve({});
+        });
+      });
+    } catch (error) {
+      return {};
+    }
+  }
+
+  /**
+   * Парсинг INFO ответа от Redis сервера
+   */
+  private parseRedisInfo(infoResponse: string): {
+    memoryUsage?: number;
+    hitRatio?: number;
+    version?: string;
+  } {
+    try {
+      const lines = infoResponse.split('\r\n');
+      const result: any = {};
+      
+      for (const line of lines) {
+        if (line.includes(':')) {
+          const [key, value] = line.split(':');
+          
+          // Извлекаем ключевые метрики
+          switch (key) {
+            case 'used_memory':
+              result.usedMemory = parseInt(value) || 0;
+              break;
+            case 'maxmemory':
+              result.maxMemory = parseInt(value) || 0;
+              break;
+            case 'keyspace_hits':
+              result.keyspaceHits = parseInt(value) || 0;
+              break;
+            case 'keyspace_misses':
+              result.keyspaceMisses = parseInt(value) || 0;
+              break;
+            case 'redis_version':
+              result.version = value;
+              break;
+          }
         }
       }
+      
+      // Вычисляем производные метрики
+      const memoryUsage = result.maxMemory > 0 ? 
+        (result.usedMemory / result.maxMemory) * 100 : 0;
+      
+      const totalRequests = result.keyspaceHits + result.keyspaceMisses;
+      const hitRatio = totalRequests > 0 ? 
+        (result.keyspaceHits / totalRequests) * 100 : 100;
+      
+      return {
+        memoryUsage,
+        hitRatio,
+        version: result.version
+      };
+    } catch (error) {
+      return {};
     }
   }
 
@@ -622,7 +800,7 @@ export class HealthCheckManager extends EventEmitter {
   /**
    * Проверка HSM Manager
    */
-  private async checkHSMService(service: ServiceConfig): Promise<{
+  private async checkHSMService(serviceConfig: ServiceConfig): Promise<{
     status: 'healthy' | 'warning' | 'critical';
     details: { message: string; data?: any };
   }> {
@@ -630,25 +808,33 @@ export class HealthCheckManager extends EventEmitter {
       // Проверка доступности PKCS#11 модуля
       // В реальной реализации здесь был бы вызов HSMManager.checkConnection()
       
-      // Пока симулируем проверку
+      // Пока симулируем проверку с учетом конфигурации сервиса
+      const timeout = serviceConfig.timeout || this.config.timeout;
       const testConnection = await new Promise((resolve) => {
-        setTimeout(() => resolve(true), 100);
+        setTimeout(() => resolve(true), Math.min(100, timeout * 1000));
       });
 
       if (testConnection) {
         return {
           status: 'healthy',
           details: {
-            message: 'HSM модуль доступен',
-            data: { connected: true }
+            message: `HSM модуль доступен (${serviceConfig.name})`,
+            data: { 
+              connected: true,
+              serviceName: serviceConfig.name,
+              timeout: timeout
+            }
           }
         };
       } else {
         return {
           status: 'critical',
           details: {
-            message: 'HSM модуль недоступен',
-            data: { connected: false }
+            message: `HSM модуль недоступен (${serviceConfig.name})`,
+            data: { 
+              connected: false,
+              serviceName: serviceConfig.name
+            }
           }
         };
       }
@@ -657,7 +843,10 @@ export class HealthCheckManager extends EventEmitter {
         status: 'critical',
         details: {
           message: `HSM проверка провалена: ${error}`,
-          data: { error: String(error) }
+          data: { 
+            error: String(error),
+            serviceName: serviceConfig.name
+          }
         }
       };
     }
@@ -874,8 +1063,8 @@ export class HealthCheckManager extends EventEmitter {
    * Проверка алертов для конкретного сервиса
    */
   private checkServiceAlerts(result: HealthCheckResult): void {
-    const service = this.config.services.find(s => s.name === result.serviceName);
-    if (!service) return;
+    const serviceConfig = this.config.services.find(s => s.name === result.serviceName);
+    if (!serviceConfig) return;
 
     // Алерт при достижении порога неудач подряд
     if (result.metadata.consecutiveFailures >= this.config.alertThresholds.consecutiveFailures) {
@@ -884,7 +1073,7 @@ export class HealthCheckManager extends EventEmitter {
         service: result.serviceName,
         failures: result.metadata.consecutiveFailures,
         threshold: this.config.alertThresholds.consecutiveFailures,
-        critical: service.critical,
+        critical: serviceConfig.critical,
         result
       });
     }
@@ -896,7 +1085,7 @@ export class HealthCheckManager extends EventEmitter {
         service: result.serviceName,
         from: previousResult.status,
         to: result.status,
-        critical: service.critical,
+        critical: serviceConfig.critical,
         result
       });
     }
@@ -1031,3 +1220,6 @@ export class HealthCheckManager extends EventEmitter {
     return { ...this.config };
   }
 }
+
+// Экспорт по умолчанию для совместимости с индексным файлом
+export default HealthCheckManager;

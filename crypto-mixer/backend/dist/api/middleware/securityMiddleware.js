@@ -146,7 +146,10 @@ class SecurityMiddleware {
             try {
                 // RUSSIAN: Проверяем экстренный режим
                 if (this.emergencyMode.active) {
-                    return this.handleEmergencyMode(req, res);
+                    const emergencyResult = this.handleEmergencyMode(req, res);
+                    if (!emergencyResult) {
+                        return; // Запрос заблокирован
+                    }
                 }
                 // RUSSIAN: Применяем DDoS защиту первой
                 const ddosResult = await this.applyDDoSProtection(req, res);
@@ -330,31 +333,35 @@ class SecurityMiddleware {
             case 'throttle':
                 // RUSSIAN: Жесткое throttling - только критически важные эндпоинты
                 if (!this.isCriticalEndpoint(req.path)) {
-                    return res.status(503).json({
+                    res.status(503).json({
                         error: 'Service Temporarily Unavailable',
                         message: 'Система находится в экстренном режиме. Доступны только критически важные операции.',
                         emergencyMode: true,
                         retryAfter: 300
                     });
+                    return false; // Запрос заблокирован
                 }
                 break;
             case 'lockdown':
                 // RUSSIAN: Полная блокировка всех запросов
-                return res.status(503).json({
+                res.status(503).json({
                     error: 'Service Locked Down',
                     message: 'Система заблокирована в связи с обнаружением атаки.',
                     emergencyMode: true,
                     retryAfter: 900
                 });
+                return false; // Запрос заблокирован
             case 'maintenance':
                 // RUSSIAN: Режим обслуживания
-                return res.status(503).json({
+                res.status(503).json({
                     error: 'Service Under Maintenance',
                     message: 'Система временно недоступна для обслуживания.',
                     emergencyMode: true,
                     retryAfter: 1800
                 });
+                return false; // Запрос заблокирован
         }
+        return true; // Запрос разрешен
     }
     /**
      * RUSSIAN: Проверка критически важных эндпоинтов

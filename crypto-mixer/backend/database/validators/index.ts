@@ -393,7 +393,10 @@ export const validateCryptocurrencyAddress = (currency: CurrencyType) => {
       BTC: /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$|^bc1[a-z0-9]{39,59}$/,
       ETH: /^0x[a-fA-F0-9]{40}$/,
       USDT: /^0x[a-fA-F0-9]{40}$|^T[A-Za-z1-9]{33}$/,
-      SOL: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
+      SOL: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,
+      LTC: /^[LM3][a-km-zA-HJ-NP-Z1-9]{26,33}$|^ltc1[a-z0-9]{39,59}$/, // Legacy, P2SH и bech32 адреса Litecoin
+      DASH: /^X[a-km-zA-HJ-NP-Z1-9]{33}$/, // DASH адреса начинаются с X
+      ZEC: /^t1[a-km-zA-HJ-NP-Z1-9]{33}$|^t3[a-km-zA-HJ-NP-Z1-9]{33}$|^zs1[a-z0-9]{75}$/ // t1 (P2PKH), t3 (P2SH), zs1 (Sapling shielded)
     };
     
     const pattern = validators[currency];

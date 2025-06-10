@@ -1,0 +1,298 @@
+# Wallet Service Deployment для Crypto Mixer
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet-service
+  namespace: crypto-mixer
+  labels:
+    app: wallet-service
+    tier: backend
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wallet-service
+  template:
+    metadata:
+      labels:
+        app: wallet-service
+        tier: backend
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3003"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: wallet-service
+        image: crypto-mixer/wallet-service:latest
+        ports:
+        - containerPort: 3003
+          name: http
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: mixer-config
+        - secretRef:
+            name: mixer-secrets
+        env:
+        - name: PORT
+          value: "3003"
+        - name: SERVICE_NAME
+          value: "wallet-service"
+        - name: HSM_ENABLED
+          value: "true"
+        - name: VAULT_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: vault-secrets
+              key: VAULT_ENDPOINT
+        - name: VAULT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: vault-secrets
+              key: VAULT_TOKEN
+        # Криптографические ключи и HSM конфигурация
+        - name: HSM_SLOT_ID
+          valueFrom:
+            secretKeyRef:
+              name: hsm-secrets
+              key: HSM_SLOT_ID
+        - name: HSM_PIN
+          valueFrom:
+            secretKeyRef:
+              name: hsm-secrets
+              key: HSM_PIN
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2"
+        # Безопасные объемы для ключей
+        volumeMounts:
+        - name: wallet-keys
+          mountPath: /app/keys
+          readOnly: true
+        - name: hsm-config
+          mountPath: /app/hsm
+          readOnly: true
+        - name: tmp-volume
+          mountPath: /tmp
+        # Health Checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3003
+          initialDelaySeconds: 45
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3003
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 2
+        # Startup Probe для медленного запуска HSM
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 3003
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 10
+        # Усиленная безопасность для wallet-service
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1002
+          runAsGroup: 1002
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: wallet-keys
+        secret:
+          secretName: wallet-keys
+          defaultMode: 0400
+      - name: hsm-config
+        secret:
+          secretName: hsm-config
+          defaultMode: 0400
+      - name: tmp-volume
+        emptyDir:
+          sizeLimit: 100Mi
+      # Стратегия обновления с минимальным даунтаймом
+      strategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 1
+          maxUnavailable: 0
+      # Размещение подов на разных нодах
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - wallet-service
+            topologyKey: kubernetes.io/hostname
+      serviceAccountName: wallet-service-account
+
+---
+# Wallet Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: wallet-service
+  namespace: crypto-mixer
+  labels:
+    app: wallet-service
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  selector:
+    app: wallet-service
+  ports:
+  - name: http
+    port: 3003
+    targetPort: 3003
+    protocol: TCP
+  type: ClusterIP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 300
+
+---
+# Wallet Service ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wallet-service-account
+  namespace: crypto-mixer
+  labels:
+    app: wallet-service
+
+---
+# Wallet Service HPA - более консервативное масштабирование
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: wallet-service-hpa
+  namespace: crypto-mixer
+  labels:
+    app: wallet-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wallet-service
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  # Более медленное масштабирование для стабильности
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 120
+
+---
+# PodDisruptionBudget для Wallet Service
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: wallet-service-pdb
+  namespace: crypto-mixer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: wallet-service
+
+---
+# NetworkPolicy для Wallet Service (усиленная безопасность)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wallet-service-network-policy
+  namespace: crypto-mixer
+spec:
+  podSelector:
+    matchLabels:
+      app: wallet-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Разрешаем входящие подключения только от mixer-api и blockchain-service
+  - from:
+    - podSelector:
+        matchLabels:
+          app: mixer-api
+    - podSelector:
+        matchLabels:
+          app: blockchain-service
+    - podSelector:
+        matchLabels:
+          app: scheduler-service
+    ports:
+    - protocol: TCP
+      port: 3003
+  egress:
+  # Разрешаем исходящие подключения к базе данных
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Разрешаем подключения к Redis
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Разрешаем подключения к Vault (внешний сервис)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 8200
+  # DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53

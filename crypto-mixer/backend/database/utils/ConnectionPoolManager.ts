@@ -13,6 +13,38 @@ import { Sequelize, Options as SequelizeOptions } from 'sequelize';
 import { enhancedDbLogger } from '../logger';
 import { EventEmitter } from 'events';
 
+// Типы для доступа к внутренним свойствам Sequelize
+interface SequelizePoolStats {
+  size: number;
+  using: number;
+  waiting: number;
+  max: number;
+  min: number;
+}
+
+interface SequelizeConnectionManager {
+  pool: SequelizePoolStats;
+  refreshTypeParser?: () => void;
+  close?: () => Promise<void>;
+  initPools?: () => void;
+  getConnection?: () => Promise<any>;
+  releaseConnection?: (connection: any) => void;
+  validate?: (connection: any) => boolean;
+}
+
+interface SequelizeInternal {
+  options?: SequelizeOptions & {
+    pool?: {
+      min?: number;
+      max?: number;
+      acquire?: number;
+      idle?: number;
+      evict?: number;
+    };
+  };
+  connectionManager?: SequelizeConnectionManager;
+}
+
 export interface ConnectionPoolConfig {
   // Основные настройки пула
   minConnections: number;
@@ -64,7 +96,7 @@ export interface HealthCheckResult {
  * Оптимизированный менеджер пула соединений
  */
 export class ConnectionPoolManager extends EventEmitter {
-  private masterPool: Sequelize;
+  private masterPool!: Sequelize; // Используем definite assignment assertion
   private readPools: Sequelize[] = [];
   private config: ConnectionPoolConfig;
   private stats: ConnectionStats;
@@ -263,18 +295,24 @@ export class ConnectionPoolManager extends EventEmitter {
    */
   public async getPoolStats(): Promise<ConnectionStats> {
     try {
-      const masterPoolStats = this.masterPool.connectionManager.pool;
+      const sequelizeInternal = this.masterPool as unknown as SequelizeInternal;
+      const masterPoolStats = sequelizeInternal.connectionManager?.pool;
+      
+      if (!masterPoolStats) {
+        enhancedDbLogger.warn('⚠️ Не удалось получить статистику пула, используем кешированные данные');
+        return { ...this.stats };
+      }
       
       this.stats = {
-        totalConnections: masterPoolStats.size,
-        activeConnections: masterPoolStats.using,
-        idleConnections: masterPoolStats.size - masterPoolStats.using,
-        waitingClients: masterPoolStats.waiting,
+        totalConnections: masterPoolStats.size || 0,
+        activeConnections: masterPoolStats.using || 0,
+        idleConnections: (masterPoolStats.size || 0) - (masterPoolStats.using || 0),
+        waitingClients: masterPoolStats.waiting || 0,
         totalRequests: this.stats.totalRequests,
         failedRequests: this.stats.failedRequests,
         averageAcquireTime: this.calculateAverageAcquireTime(),
-        peakConnections: Math.max(this.stats.peakConnections, masterPoolStats.size),
-        poolUtilization: masterPoolStats.size > 0 ? (masterPoolStats.using / masterPoolStats.size) * 100 : 0
+        peakConnections: Math.max(this.stats.peakConnections, masterPoolStats.size || 0),
+        poolUtilization: (masterPoolStats.size || 0) > 0 ? ((masterPoolStats.using || 0) / (masterPoolStats.size || 0)) * 100 : 0
       };
 
       return { ...this.stats };
@@ -414,7 +452,8 @@ export class ConnectionPoolManager extends EventEmitter {
       
       // Если утилизация высокая и есть ожидающие клиенты
       if (stats.poolUtilization > 80 && stats.waitingClients > 0) {
-        const currentMax = this.masterPool.options.pool?.max || this.config.maxConnections;
+        const sequelizeInternal = this.masterPool as unknown as SequelizeInternal;
+        const currentMax = sequelizeInternal.options?.pool?.max || this.config.maxConnections;
         const newMax = Math.min(
           currentMax + this.config.maxPoolSizeIncrease,
           this.config.maxConnections * 2 // Не превышаем удвоенный максимум
@@ -435,7 +474,8 @@ export class ConnectionPoolManager extends EventEmitter {
       
       // Если утилизация низкая длительное время
       else if (stats.poolUtilization < this.config.poolSizeDecreaseThreshold * 100) {
-        const currentMax = this.masterPool.options.pool?.max || this.config.maxConnections;
+        const sequelizeInternal = this.masterPool as unknown as SequelizeInternal;
+        const currentMax = sequelizeInternal.options?.pool?.max || this.config.maxConnections;
         const newMax = Math.max(
           Math.floor(currentMax * 0.8),
           this.config.minConnections

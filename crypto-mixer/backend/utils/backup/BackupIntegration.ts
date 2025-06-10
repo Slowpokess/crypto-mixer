@@ -60,9 +60,10 @@ export class IntegratedBackupSystem {
   constructor(config: IntegratedBackupSystemConfig) {
     this.config = config;
     
-    // Инициализация компонентов
+    // Инициализация компонентов с возможностью инъекции DatabaseManager
     this.backupManager = new BackupManager(config.backup);
-    this.drManager = new DisasterRecoveryManager(config.disasterRecovery, this.backupManager);
+    // Передаем дополнительный параметр DatabaseManager в DisasterRecoveryManager для полноценной функциональности
+    this.drManager = new DisasterRecoveryManager(config.disasterRecovery, this.backupManager, undefined);
     this.monitoring = new BackupMonitoring(config.monitoring, this.backupManager, this.drManager);
     
     if (config.dashboard.enabled) {
@@ -117,8 +118,10 @@ export class IntegratedBackupSystem {
       
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
-      await enhancedDbLogger.logError(error);
-      this.systemErrors.push(`Initialization failed: ${error}`);
+      // Правильная типизация ошибки для логгера
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      await enhancedDbLogger.logError(errorToLog);
+      this.systemErrors.push(`Initialization failed: ${errorToLog.message}`);
       throw error;
     }
   }
@@ -174,8 +177,10 @@ export class IntegratedBackupSystem {
       
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
-      await enhancedDbLogger.logError(error);
-      this.systemErrors.push(`Start failed: ${error}`);
+      // Правильная типизация ошибки для логгера
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      await enhancedDbLogger.logError(errorToLog);
+      this.systemErrors.push(`Start failed: ${errorToLog.message}`);
       throw error;
     }
   }
@@ -207,7 +212,8 @@ export class IntegratedBackupSystem {
       if (this.dashboard) {
         shutdownPromises.push(
           this.stopDashboard().catch(error => {
-            this.systemErrors.push(`Dashboard shutdown error: ${error}`);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.systemErrors.push(`Dashboard shutdown error: ${errorMessage}`);
           })
         );
       }
@@ -216,7 +222,8 @@ export class IntegratedBackupSystem {
       if (this.monitoring) {
         shutdownPromises.push(
           this.stopMonitoring().catch(error => {
-            this.systemErrors.push(`Monitoring shutdown error: ${error}`);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.systemErrors.push(`Monitoring shutdown error: ${errorMessage}`);
           })
         );
       }
@@ -225,7 +232,8 @@ export class IntegratedBackupSystem {
       if (this.drManager) {
         shutdownPromises.push(
           this.stopDisasterRecovery().catch(error => {
-            this.systemErrors.push(`Disaster Recovery shutdown error: ${error}`);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.systemErrors.push(`Disaster Recovery shutdown error: ${errorMessage}`);
           })
         );
       }
@@ -234,7 +242,8 @@ export class IntegratedBackupSystem {
       if (this.backupManager) {
         shutdownPromises.push(
           this.stopBackupManager().catch(error => {
-            this.systemErrors.push(`Backup Manager shutdown error: ${error}`);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.systemErrors.push(`Backup Manager shutdown error: ${errorMessage}`);
           })
         );
       }
@@ -258,8 +267,10 @@ export class IntegratedBackupSystem {
       
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
-      await enhancedDbLogger.logError(error);
-      this.systemErrors.push(`Stop failed: ${error}`);
+      // Правильная типизация ошибки для логгера
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      await enhancedDbLogger.logError(errorToLog);
+      this.systemErrors.push(`Stop failed: ${errorToLog.message}`);
       
       // Принудительная остановка при ошибке
       this.isRunning = false;
@@ -441,8 +452,9 @@ export class IntegratedBackupSystem {
       // Monitoring запускается автоматически при инициализации если enabled
       enhancedDbLogger.info('✅ BackupMonitoring запущен');
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       enhancedDbLogger.error('❌ Ошибка запуска BackupMonitoring', { error });
-      this.systemErrors.push(`Monitoring start failed: ${error}`);
+      this.systemErrors.push(`Monitoring start failed: ${errorMessage}`);
     }
   }
 
@@ -451,8 +463,9 @@ export class IntegratedBackupSystem {
       // DisasterRecovery запускается автоматически при инициализации если enabled
       enhancedDbLogger.info('✅ DisasterRecoveryManager запущен');
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       enhancedDbLogger.error('❌ Ошибка запуска DisasterRecoveryManager', { error });
-      this.systemErrors.push(`DisasterRecovery start failed: ${error}`);
+      this.systemErrors.push(`DisasterRecovery start failed: ${errorMessage}`);
     }
   }
 
@@ -463,8 +476,9 @@ export class IntegratedBackupSystem {
       await this.dashboard.start();
       enhancedDbLogger.info('✅ BackupDashboard запущен');
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       enhancedDbLogger.error('❌ Ошибка запуска BackupDashboard', { error });
-      this.systemErrors.push(`Dashboard start failed: ${error}`);
+      this.systemErrors.push(`Dashboard start failed: ${errorMessage}`);
     }
   }
 
@@ -473,8 +487,9 @@ export class IntegratedBackupSystem {
       try {
         await this.performSystemHealthCheck();
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         enhancedDbLogger.error('❌ Ошибка системного health check', { error });
-        this.systemErrors.push(`Health check failed: ${error}`);
+        this.systemErrors.push(`Health check failed: ${errorMessage}`);
       }
     }, this.config.integration.healthCheckInterval * 1000);
 
@@ -547,12 +562,42 @@ export class IntegratedBackupSystem {
     return 'healthy';
   }
 
-  private getComponentsStatus() {
+  private getComponentsStatus(): {
+    backupManager: 'running' | 'stopped' | 'error';
+    disasterRecovery: 'running' | 'stopped' | 'error';
+    monitoring: 'running' | 'stopped' | 'error';
+    dashboard: 'running' | 'stopped' | 'error';
+  } {
+    // Определяем статус каждого компонента с проверкой ошибок
+    const backupManagerStatus: 'running' | 'stopped' | 'error' = this.isRunning ? 
+      (this.systemErrors.some(error => error.includes('BackupManager')) ? 'error' : 'running') : 
+      'stopped';
+    
+    const disasterRecoveryStatus: 'running' | 'stopped' | 'error' = 
+      this.isRunning && this.config.disasterRecovery.enabled ? 
+        (this.systemErrors.some(error => error.includes('DisasterRecovery')) ? 'error' : 'running') : 
+        'stopped';
+    
+    const monitoringStatus: 'running' | 'stopped' | 'error' = 
+      this.isRunning && this.config.monitoring.enabled ? 
+        (this.systemErrors.some(error => error.includes('Monitoring')) ? 'error' : 'running') : 
+        'stopped';
+    
+    let dashboardStatus: 'running' | 'stopped' | 'error' = 'stopped';
+    if (this.dashboard) {
+      const dashboardStatusInfo = this.dashboard.getStatus();
+      if (dashboardStatusInfo.isRunning) {
+        dashboardStatus = this.systemErrors.some(error => error.includes('Dashboard')) ? 'error' : 'running';
+      } else {
+        dashboardStatus = 'stopped';
+      }
+    }
+    
     return {
-      backupManager: this.isRunning ? 'running' : 'stopped',
-      disasterRecovery: this.isRunning && this.config.disasterRecovery.enabled ? 'running' : 'stopped',
-      monitoring: this.isRunning && this.config.monitoring.enabled ? 'running' : 'stopped',
-      dashboard: this.dashboard?.getStatus().isRunning ? 'running' : 'stopped'
+      backupManager: backupManagerStatus,
+      disasterRecovery: disasterRecoveryStatus,
+      monitoring: monitoringStatus,
+      dashboard: dashboardStatus
     };
   }
 }

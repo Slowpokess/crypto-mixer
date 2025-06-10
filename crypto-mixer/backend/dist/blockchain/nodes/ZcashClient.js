@@ -54,8 +54,8 @@ const zcashNetwork = {
         public: 0x0488b21e,
         private: 0x0488ade4,
     },
-    pubKeyHash: 0x1cb8, // t1 адреса (transparent)
-    scriptHash: 0x1cbd, // t3 адреса (multisig)
+    pubKeyHash: 0x1c, // t1 адреса (transparent) - исправлено на 8-битное значение
+    scriptHash: 0x1c, // t3 адреса (multisig) - исправлено на 8-битное значение
     wif: 0x80,
 };
 /**

@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import '../../types/express';
 /**
  * Расширенная система rate limiting для crypto-mixer
  *

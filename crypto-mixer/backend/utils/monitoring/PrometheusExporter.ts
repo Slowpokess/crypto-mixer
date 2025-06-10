@@ -105,7 +105,9 @@ export class PrometheusExporter extends EventEmitter {
     } catch (error) {
       this.isRunning = false;
       await enhancedDbLogger.endOperation(operationId, false);
-      await enhancedDbLogger.logError(error);
+      // Правильная типизация error для логгера
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      await enhancedDbLogger.logError(errorToLog);
       throw error;
     }
   }
@@ -397,28 +399,117 @@ export class PrometheusExporter extends EventEmitter {
       }
     );
 
-    // Метрики блокчейнов
+    // Метрики блокчейнов с полной типизацией для каждого типа
     Object.entries(snapshot.business.blockchain).forEach(([blockchain, data]) => {
-      metrics.push(
-        {
-          name: `${namespace}_blockchain_connected`,
-          type: 'gauge',
-          help: 'Blockchain connection status (1 = connected, 0 = disconnected)',
-          value: data.connected ? 1 : 0,
-          labels: { blockchain },
-          timestamp
-        }
-      );
+      // Общая метрика подключения для всех блокчейнов
+      metrics.push({
+        name: `${namespace}_blockchain_connected`,
+        type: 'gauge',
+        help: 'Blockchain connection status (1 = connected, 0 = disconnected)',
+        value: data.connected ? 1 : 0,
+        labels: { blockchain },
+        timestamp
+      });
 
-      if (blockchain === 'bitcoin') {
-        metrics.push({
-          name: `${namespace}_blockchain_block_height`,
-          type: 'gauge',
-          help: 'Current blockchain block height',
-          value: data.blockHeight,
-          labels: { blockchain },
-          timestamp
-        });
+      // Специфичные метрики для каждого блокчейна
+      switch (blockchain) {
+        case 'bitcoin':
+          const bitcoinData = data as { connected: boolean; blockHeight: number; syncStatus: number; transactionPool: number };
+          metrics.push(
+            {
+              name: `${namespace}_blockchain_block_height`,
+              type: 'gauge',
+              help: 'Current Bitcoin block height',
+              value: bitcoinData.blockHeight,
+              labels: { blockchain },
+              timestamp
+            },
+            {
+              name: `${namespace}_blockchain_sync_status`,
+              type: 'gauge',
+              help: 'Bitcoin sync status percentage',
+              value: bitcoinData.syncStatus,
+              labels: { blockchain },
+              timestamp
+            },
+            {
+              name: `${namespace}_blockchain_transaction_pool_size`,
+              type: 'gauge',
+              help: 'Bitcoin transaction pool size',
+              value: bitcoinData.transactionPool,
+              labels: { blockchain },
+              timestamp
+            }
+          );
+          break;
+
+        case 'ethereum':
+          const ethereumData = data as { connected: boolean; blockNumber: number; gasPrice: number; pendingTransactions: number };
+          metrics.push(
+            {
+              name: `${namespace}_blockchain_block_number`,
+              type: 'gauge',
+              help: 'Current Ethereum block number',
+              value: ethereumData.blockNumber,
+              labels: { blockchain },
+              timestamp
+            },
+            {
+              name: `${namespace}_blockchain_gas_price_gwei`,
+              type: 'gauge',
+              help: 'Current Ethereum gas price in Gwei',
+              value: ethereumData.gasPrice,
+              labels: { blockchain },
+              timestamp
+            },
+            {
+              name: `${namespace}_blockchain_pending_transactions`,
+              type: 'gauge',
+              help: 'Ethereum pending transactions count',
+              value: ethereumData.pendingTransactions,
+              labels: { blockchain },
+              timestamp
+            }
+          );
+          break;
+
+        case 'solana':
+          const solanaData = data as { connected: boolean; slot: number; epoch: number; transactionCount: number };
+          metrics.push(
+            {
+              name: `${namespace}_blockchain_slot`,
+              type: 'gauge',
+              help: 'Current Solana slot number',
+              value: solanaData.slot,
+              labels: { blockchain },
+              timestamp
+            },
+            {
+              name: `${namespace}_blockchain_epoch`,
+              type: 'gauge',
+              help: 'Current Solana epoch number',
+              value: solanaData.epoch,
+              labels: { blockchain },
+              timestamp
+            },
+            {
+              name: `${namespace}_blockchain_transaction_count`,
+              type: 'counter',
+              help: 'Total Solana transaction count',
+              value: solanaData.transactionCount,
+              labels: { blockchain },
+              timestamp
+            }
+          );
+          break;
+
+        default:
+          // Для неизвестных блокчейнов логируем предупреждение но не падаем
+          enhancedDbLogger.warn(`⚠️ Неизвестный тип блокчейна для Prometheus метрик: ${blockchain}`, { 
+            blockchain, 
+            availableProperties: Object.keys(data) 
+          });
+          break;
       }
     });
 

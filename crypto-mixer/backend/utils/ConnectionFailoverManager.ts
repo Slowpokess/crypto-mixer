@@ -3,7 +3,7 @@ import { AxiosInstance } from 'axios';
 import { torManager } from './TorManager';
 import { torBlockchainClient } from '../blockchain/TorBlockchainClient';
 import { torMonitoringService } from './TorMonitoringService';
-import { logger } from './logger';
+import { enhancedDbLogger } from './logger';
 import axios from 'axios';
 
 /**
@@ -57,7 +57,7 @@ export class ConnectionFailoverManager extends EventEmitter {
   private attempts: ConnectionAttempt[] = [];
   private stats: FailoverStats;
   private currentConnections: Map<string, 'tor' | 'direct'> = new Map();
-  private healthCheckTimer: NodeJS.Timer | null = null;
+  private healthCheckTimer: NodeJS.Timeout | null = null;
   private maxAttemptsHistory = 1000; // Максимум записей в истории
 
   // Предустановленные стратегии для разных типов запросов
@@ -124,7 +124,7 @@ export class ConnectionFailoverManager extends EventEmitter {
     this.setupEventListeners();
     this.startHealthChecking();
 
-    logger.info('🔄 ConnectionFailoverManager инициализирован');
+    enhancedDbLogger.info('🔄 ConnectionFailoverManager инициализирован');
   }
 
   /**
@@ -136,7 +136,7 @@ export class ConnectionFailoverManager extends EventEmitter {
       this.currentConnections.set(type, strategy.primary);
     }
 
-    logger.info('✅ Стратегии соединений инициализированы:', 
+    enhancedDbLogger.info('✅ Стратегии соединений инициализированы:', 
       Object.keys(this.DEFAULT_STRATEGIES));
   }
 
@@ -177,7 +177,7 @@ export class ConnectionFailoverManager extends EventEmitter {
       await this.performHealthCheck();
     }, 30000); // Каждые 30 секунд
 
-    logger.info('🔍 Запущена периодическая проверка здоровья соединений');
+    enhancedDbLogger.info('🔍 Запущена периодическая проверка здоровья соединений');
   }
 
   /**
@@ -202,10 +202,18 @@ export class ConnectionFailoverManager extends EventEmitter {
       return { instance, connectionType: currentConnection };
 
     } catch (error) {
-      logger.warn(`⚠️ ${requestType} соединение через ${currentConnection} неудачно:`, error.message);
+      // Правильная типизация error для безопасного доступа к message
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorToPass = error instanceof Error ? error : new Error(String(error));
+      
+      enhancedDbLogger.warn(`⚠️ ${requestType} соединение через ${currentConnection} неудачно:`, { 
+        error: errorMessage, 
+        requestType, 
+        currentConnection 
+      });
       
       // Пытаемся переключиться на fallback
-      return await this.attemptFailover(requestType, endpoint, error);
+      return await this.attemptFailover(requestType, endpoint, errorToPass);
     }
   }
 
@@ -253,7 +261,7 @@ export class ConnectionFailoverManager extends EventEmitter {
 
     const fallbackConnection = strategy.fallback;
     
-    logger.warn(`🔄 Переключаемся с ${currentConnection} на ${fallbackConnection} для ${requestType}`);
+    enhancedDbLogger.warn(`🔄 Переключаемся с ${currentConnection} на ${fallbackConnection} для ${requestType}`);
 
     try {
       const instance = await this.createAxiosInstance(fallbackConnection, requestType);
@@ -269,7 +277,7 @@ export class ConnectionFailoverManager extends EventEmitter {
       this.stats.lastFailover = new Date();
       this.stats.currentStrategy = fallbackConnection;
 
-      logger.info(`✅ Успешно переключились на ${fallbackConnection} для ${requestType}`);
+      enhancedDbLogger.info(`✅ Успешно переключились на ${fallbackConnection} для ${requestType}`);
       this.emit('failover', {
         requestType,
         from: currentConnection,
@@ -280,15 +288,33 @@ export class ConnectionFailoverManager extends EventEmitter {
       return { instance, connectionType: fallbackConnection };
 
     } catch (fallbackError) {
-      logger.error(`❌ Fallback соединение также неудачно для ${requestType}:`, fallbackError.message);
+      // Правильная типизация fallbackError
+      const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      const fallbackErrorToThrow = fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError));
+      
+      enhancedDbLogger.error(`❌ Fallback соединение также неудачно для ${requestType}:`, {
+        error: fallbackErrorMessage,
+        requestType,
+        primaryError: originalError?.message
+      });
       
       this.emit('failoverFailed', {
         requestType,
         primaryError: originalError?.message,
-        fallbackError: fallbackError.message,
+        fallbackError: fallbackErrorMessage,
+        fullError: fallbackErrorToThrow
       });
 
-      throw new Error(`Все соединения неудачны для ${requestType}: ${fallbackError.message}`);
+      // Используем fallbackErrorToThrow для передачи полной информации об ошибке
+      const consolidatedError = new Error(`Все соединения неудачны для ${requestType}: ${fallbackErrorMessage}`);
+      // Добавляем информацию о причине ошибки в stack trace вместо использования cause (ES2022)
+      if (fallbackErrorToThrow.stack) {
+        consolidatedError.stack = `${consolidatedError.stack}\nCaused by: ${fallbackErrorToThrow.stack}`;
+      }
+      // Добавляем дополнительную информацию в message
+      (consolidatedError as any).originalError = fallbackErrorToThrow;
+      
+      throw consolidatedError;
     }
   }
 
@@ -314,7 +340,8 @@ export class ConnectionFailoverManager extends EventEmitter {
 
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      this.recordAttempt(endpoint, connectionType, false, responseTime, error.message);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.recordAttempt(endpoint, connectionType, false, responseTime, errorMessage);
       throw error;
     }
   }
@@ -384,7 +411,7 @@ export class ConnectionFailoverManager extends EventEmitter {
    * Обработка сбоя Tor сервиса
    */
   private handleTorServiceFailure(event: any): void {
-    logger.warn('🚨 Обнаружен сбой Tor сервиса:', event.serviceName);
+    enhancedDbLogger.warn('🚨 Обнаружен сбой Tor сервиса:', event.serviceName);
 
     // Переключаем критически важные соединения на direct
     const criticalTypes = ['web', 'api', 'blockchain'];
@@ -395,7 +422,7 @@ export class ConnectionFailoverManager extends EventEmitter {
       
       if (strategy && currentConnection === 'tor' && strategy.fallback !== 'none') {
         this.currentConnections.set(type, strategy.fallback);
-        logger.info(`🔄 Переключили ${type} с tor на ${strategy.fallback}`);
+        enhancedDbLogger.info(`🔄 Переключили ${type} с tor на ${strategy.fallback}`);
         
         this.emit('automaticFailover', {
           requestType: type,
@@ -409,7 +436,7 @@ export class ConnectionFailoverManager extends EventEmitter {
    * Обработка восстановления Tor сервиса
    */
   private handleTorServiceRecovery(event: any): void {
-    logger.info('✅ Tor сервис восстановлен:', event.serviceName);
+    enhancedDbLogger.info('✅ Tor сервис восстановлен:', event.serviceName);
 
     // Возвращаемся к Tor для соединений с autoRecovery
     for (const [type, strategy] of this.strategies) {
@@ -420,7 +447,7 @@ export class ConnectionFailoverManager extends EventEmitter {
           this.currentConnections.set(type, 'tor');
           this.stats.recoveryCount++;
           
-          logger.info(`🔄 Восстановили ${type} соединение на tor`);
+          enhancedDbLogger.info(`🔄 Восстановили ${type} соединение на tor`);
           
           this.emit('automaticRecovery', {
             requestType: type,
@@ -435,7 +462,7 @@ export class ConnectionFailoverManager extends EventEmitter {
    * Обработка критических алертов Tor
    */
   private handleCriticalTorAlert(alert: any): void {
-    logger.error('🚨 Критический алерт Tor:', alert.message);
+    enhancedDbLogger.error('🚨 Критический алерт Tor:', alert.message);
 
     // Экстренное переключение всех соединений на direct
     if (alert.service === 'multiple_failures' || alert.service === 'essential_failures') {
@@ -447,7 +474,7 @@ export class ConnectionFailoverManager extends EventEmitter {
    * Экстренное переключение всех соединений
    */
   private emergencyFailoverAll(): void {
-    logger.warn('🚨 ЭКСТРЕННОЕ ПЕРЕКЛЮЧЕНИЕ всех соединений на direct');
+    enhancedDbLogger.warn('🚨 ЭКСТРЕННОЕ ПЕРЕКЛЮЧЕНИЕ всех соединений на direct');
 
     for (const [type, strategy] of this.strategies) {
       if (strategy.fallback !== 'none') {
@@ -465,7 +492,7 @@ export class ConnectionFailoverManager extends EventEmitter {
    * Обработка отключения Tor
    */
   private handleTorDisconnection(): void {
-    logger.warn('🔌 Tor соединение потеряно');
+    enhancedDbLogger.warn('🔌 Tor соединение потеряно');
     
     // Переключаем все на direct где возможно
     for (const [type, strategy] of this.strategies) {
@@ -479,7 +506,7 @@ export class ConnectionFailoverManager extends EventEmitter {
    * Обработка переподключения Tor
    */
   private handleTorReconnection(): void {
-    logger.info('🔌 Tor соединение восстановлено');
+    enhancedDbLogger.info('🔌 Tor соединение восстановлено');
     
     // Возвращаемся к Tor где включено autoRecovery
     for (const [type, strategy] of this.strategies) {
@@ -494,7 +521,7 @@ export class ConnectionFailoverManager extends EventEmitter {
    */
   private async performHealthCheck(): Promise<void> {
     try {
-      logger.debug('🔍 Выполняем проверку здоровья соединений...');
+      enhancedDbLogger.debug('🔍 Выполняем проверку здоровья соединений...');
 
       // Тестируем текущие соединения
       for (const [type, connectionType] of this.currentConnections) {
@@ -508,20 +535,94 @@ export class ConnectionFailoverManager extends EventEmitter {
           
           await this.testConnection(instance, testUrl, connectionType);
           
+          // Дополнительная проверка блокчейн соединений для типа 'blockchain'
+          if (type === 'blockchain' && connectionType === 'tor') {
+            await this.performBlockchainHealthCheck();
+          }
+          
         } catch (error) {
-          logger.warn(`⚠️ Health check неудачен для ${type}:${connectionType}:`, error.message);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          enhancedDbLogger.warn(`⚠️ Health check неудачен для ${type}:${connectionType}:`, {
+            error: errorMessage,
+            type,
+            connectionType
+          });
           
           // Если текущее соединение не работает, пытаемся переключиться
           const strategy = this.strategies.get(type);
           if (strategy && strategy.fallback !== 'none' && connectionType !== strategy.fallback) {
             this.currentConnections.set(type, strategy.fallback);
-            logger.info(`🔄 Health check переключил ${type} на ${strategy.fallback}`);
+            enhancedDbLogger.info(`🔄 Health check переключил ${type} на ${strategy.fallback}`);
           }
         }
       }
 
     } catch (error) {
-      logger.error('❌ Ошибка health check:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      enhancedDbLogger.error('❌ Ошибка health check:', { error: errorMessage });
+    }
+  }
+
+  /**
+   * Проверка здоровья блокчейн соединений через Tor
+   */
+  private async performBlockchainHealthCheck(): Promise<void> {
+    try {
+      enhancedDbLogger.debug('🔗 Проверяем блокчейн соединения через Tor...');
+      
+      // Получаем статус всех блокчейн соединений через доступный healthCheck метод
+      const blockchainHealthResults = await torBlockchainClient.healthCheck();
+      
+      // Преобразуем результаты healthCheck в формат connected/disconnected
+      const blockchainStatus: Record<string, { connected: boolean; status?: string; error?: string }> = {};
+      
+      for (const [currency, healthData] of Object.entries(blockchainHealthResults)) {
+        blockchainStatus[currency] = {
+          connected: healthData.status === 'healthy',
+          status: healthData.status,
+          error: healthData.error
+        };
+      }
+      
+      // Проверяем критически важные блокчейны
+      const criticalBlockchains = ['bitcoin', 'ethereum'];
+      let criticalFailures = 0;
+      
+      for (const blockchain of criticalBlockchains) {
+        if (blockchainStatus[blockchain] && !blockchainStatus[blockchain].connected) {
+          criticalFailures++;
+          enhancedDbLogger.warn(`⚠️ Блокчейн ${blockchain} недоступен через Tor`, {
+            blockchain,
+            status: blockchainStatus[blockchain]
+          });
+        }
+      }
+      
+      // Если критически важные блокчейны недоступны, инициируем переключение
+      if (criticalFailures > 0) {
+        enhancedDbLogger.error(`🚨 ${criticalFailures} критически важных блокчейнов недоступны через Tor`, {
+          criticalFailures,
+          totalCritical: criticalBlockchains.length
+        });
+        
+        // Переключаем блокчейн соединения на direct если возможно
+        const blockchainStrategy = this.strategies.get('blockchain');
+        if (blockchainStrategy && blockchainStrategy.fallback !== 'none') {
+          this.currentConnections.set('blockchain', blockchainStrategy.fallback);
+          
+          this.emit('blockchainFailover', {
+            reason: `${criticalFailures} critical blockchain connections failed via Tor`,
+            failedBlockchains: criticalBlockchains.filter(bc => 
+              blockchainStatus[bc] && !blockchainStatus[bc].connected
+            ),
+            newConnection: blockchainStrategy.fallback
+          });
+        }
+      }
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      enhancedDbLogger.error('❌ Ошибка проверки блокчейн соединений:', { error: errorMessage });
     }
   }
 
@@ -551,7 +652,7 @@ export class ConnectionFailoverManager extends EventEmitter {
     }
 
     this.currentConnections.set(requestType, connectionType);
-    logger.info(`🔧 Принудительно установлено ${connectionType} для ${requestType}`);
+    enhancedDbLogger.info(`🔧 Принудительно установлено ${connectionType} для ${requestType}`);
 
     this.emit('manualOverride', { requestType, connectionType });
   }
@@ -586,7 +687,7 @@ export class ConnectionFailoverManager extends EventEmitter {
       this.healthCheckTimer = null;
     }
 
-    logger.info('🛑 ConnectionFailoverManager остановлен');
+    enhancedDbLogger.info('🛑 ConnectionFailoverManager остановлен');
     this.emit('shutdown');
   }
 }

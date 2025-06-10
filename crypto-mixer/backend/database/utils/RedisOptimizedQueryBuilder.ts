@@ -15,6 +15,7 @@ import { PerformanceMonitor } from '../../utils/monitoring/PerformanceMonitor';
 import { DatabaseError, ErrorCode } from '../../utils/errors/ErrorTypes';
 import { RedisConnectionManager } from '../cache/RedisConnectionManager';
 import { RedisCacheLayer } from '../cache/RedisCacheLayer';
+import { MixRequestStatsResult, WalletStatsResult } from './OptimizedQueryBuilder';
 
 export interface RedisQueryOptions {
   // Базовые опции
@@ -79,6 +80,7 @@ export class RedisOptimizedQueryBuilder {
   private redisCache: RedisCacheLayer;
   private performanceMonitor?: PerformanceMonitor;
   private queryStats = new Map<string, RedisQueryPerformanceStats>();
+  private activeSpans = new Map<string, { startTime: number; operation: string }>();
 
   // Cache invalidation mapping
   private invalidationTagsMap = new Map<string, string[]>();
@@ -93,6 +95,27 @@ export class RedisOptimizedQueryBuilder {
     this.performanceMonitor = performanceMonitor;
 
     enhancedDbLogger.info('🚀 RedisOptimizedQueryBuilder инициализирован с Redis backing');
+  }
+
+  /**
+   * Создание span для трассировки операций
+   */
+  private createSpan(operation: string, _category: string): string {
+    const spanId = `${operation}_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    this.activeSpans.set(spanId, { startTime: Date.now(), operation });
+    return spanId;
+  }
+
+  /**
+   * Завершение span для трассировки операций
+   */
+  private finishSpan(spanId: string): void {
+    const span = this.activeSpans.get(spanId);
+    if (span) {
+      const duration = Date.now() - span.startTime;
+      enhancedDbLogger.info(`🕐 Operation ${span.operation} completed`, { duration: `${duration}ms` });
+      this.activeSpans.delete(spanId);
+    }
   }
 
   /**
@@ -111,7 +134,7 @@ export class RedisOptimizedQueryBuilder {
     successRate: number;
   }> {
     const operationId = await enhancedDbLogger.startOperation('getMixRequestStatistics');
-    const span = this.performanceMonitor?.startSpan('redis_db_mix_request_stats', 'database');
+    const span = this.createSpan('redis_db_mix_request_stats', 'database');
 
     try {
       // Генерируем умный cache key
@@ -121,7 +144,7 @@ export class RedisOptimizedQueryBuilder {
       // Пытаемся получить из Redis кэша
       const cachedResult = await this.redisCache.get(cacheKey);
       if (cachedResult) {
-        if (span) this.performanceMonitor?.finishSpan(span, 'success');
+        this.finishSpan(span);
         await enhancedDbLogger.endOperation(operationId, true);
         
         enhancedDbLogger.debug('✅ Redis cache hit для MixRequest статистики', { cacheKey });
@@ -133,7 +156,7 @@ export class RedisOptimizedQueryBuilder {
       const currencyFilter = filters.currency ? `AND currency = :currency` : '';
 
       // Агрегированный запрос вместо загрузки всех записей
-      const [statsResult] = await this.executeQuery<AggregationResult[]>(`
+      const statsResult = await this.executeQuery<MixRequestStatsResult[]>(`
         SELECT 
           COUNT(*) as total,
           SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed,
@@ -173,17 +196,18 @@ export class RedisOptimizedQueryBuilder {
       });
 
       // Формируем результат
-      const total = Number(statsResult[0]?.total || 0);
-      const completed = Number(statsResult[0]?.completed || 0);
+      const firstResult = statsResult[0] as MixRequestStatsResult;
+      const total = Number(firstResult?.total || 0);
+      const completed = Number(firstResult?.completed || 0);
 
       const byStatus = {
-        COMPLETED: Number(statsResult[0]?.completed || 0),
-        PENDING: Number(statsResult[0]?.pending || 0),
-        DEPOSITED: Number(statsResult[0]?.deposited || 0),
-        POOLING: Number(statsResult[0]?.pooling || 0),
-        MIXING: Number(statsResult[0]?.mixing || 0),
-        FAILED: Number(statsResult[0]?.failed || 0),
-        CANCELLED: Number(statsResult[0]?.cancelled || 0)
+        COMPLETED: Number(firstResult?.completed || 0),
+        PENDING: Number(firstResult?.pending || 0),
+        DEPOSITED: Number(firstResult?.deposited || 0),
+        POOLING: Number(firstResult?.pooling || 0),
+        MIXING: Number(firstResult?.mixing || 0),
+        FAILED: Number(firstResult?.failed || 0),
+        CANCELLED: Number(firstResult?.cancelled || 0)
       };
 
       const byCurrency: Record<string, number> = {};
@@ -215,7 +239,7 @@ export class RedisOptimizedQueryBuilder {
       // Регистрируем invalidation tags
       this.registerInvalidationTags(cacheKey, invalidationTags);
 
-      if (span) this.performanceMonitor?.finishSpan(span, 'success');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, true);
 
       enhancedDbLogger.debug('💾 MixRequest статистика кэширована в Redis', { 
@@ -227,13 +251,13 @@ export class RedisOptimizedQueryBuilder {
       return result;
 
     } catch (error) {
-      if (span) this.performanceMonitor?.finishSpan(span, 'error');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, false);
       await enhancedDbLogger.logError(error as Error);
       throw new DatabaseError(
         'Ошибка получения статистики MixRequest',
         ErrorCode.QUERY_FAILED,
-        { operation: 'getMixRequestStatistics', filters }
+        { operation: 'getMixRequestStatistics', additionalInfo: { filters } }
       );
     }
   }
@@ -250,7 +274,7 @@ export class RedisOptimizedQueryBuilder {
     lockedWallets: number;
   }> {
     const operationId = await enhancedDbLogger.startOperation('getWalletStatistics');
-    const span = this.performanceMonitor?.startSpan('redis_db_wallet_stats', 'database');
+    const span = this.createSpan('redis_db_wallet_stats', 'database');
 
     try {
       const cacheKey = 'wallet_statistics';
@@ -259,7 +283,7 @@ export class RedisOptimizedQueryBuilder {
       // Проверяем Redis кэш
       const cachedResult = await this.redisCache.get(cacheKey);
       if (cachedResult) {
-        if (span) this.performanceMonitor?.finishSpan(span, 'success');
+        this.finishSpan(span);
         await enhancedDbLogger.endOperation(operationId, true);
         
         enhancedDbLogger.debug('✅ Redis cache hit для Wallet статистики');
@@ -267,7 +291,7 @@ export class RedisOptimizedQueryBuilder {
       }
 
       // Основная статистика
-      const [mainStats] = await this.executeQuery<AggregationResult[]>(`
+      const mainStatsResult = await this.executeQuery<WalletStatsResult[]>(`
         SELECT 
           COUNT(*) as total,
           SUM(CASE WHEN is_active = true THEN 1 ELSE 0 END) as active_wallets,
@@ -314,13 +338,15 @@ export class RedisOptimizedQueryBuilder {
         totalBalance[currency] = Number(stat.total_balance || 0);
       });
 
+      const mainStats = mainStatsResult[0] as WalletStatsResult;
+      
       const result = {
-        total: Number(mainStats[0]?.total || 0),
+        total: Number(mainStats?.total || 0),
         byType,
         byCurrency,
         totalBalance,
-        activeWallets: Number(mainStats[0]?.active_wallets || 0),
-        lockedWallets: Number(mainStats[0]?.locked_wallets || 0)
+        activeWallets: Number(mainStats?.active_wallets || 0),
+        lockedWallets: Number(mainStats?.locked_wallets || 0)
       };
 
       // Кэшируем в Redis
@@ -329,7 +355,7 @@ export class RedisOptimizedQueryBuilder {
       
       this.registerInvalidationTags(cacheKey, invalidationTags);
 
-      if (span) this.performanceMonitor?.finishSpan(span, 'success');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, true);
 
       enhancedDbLogger.debug('💾 Wallet статистика кэширована в Redis', { 
@@ -340,7 +366,7 @@ export class RedisOptimizedQueryBuilder {
       return result;
 
     } catch (error) {
-      if (span) this.performanceMonitor?.finishSpan(span, 'error');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, false);
       await enhancedDbLogger.logError(error as Error);
       throw new DatabaseError(
@@ -365,7 +391,7 @@ export class RedisOptimizedQueryBuilder {
     limit?: number;
   }): Promise<PaginatedResult<any>> {
     const operationId = await enhancedDbLogger.startOperation('findMixRequestsWithRelations');
-    const span = this.performanceMonitor?.startSpan('redis_db_mix_request_find', 'database');
+    const span = this.createSpan('redis_db_mix_request_find', 'database');
 
     try {
       const page = filters.page || 1;
@@ -384,7 +410,7 @@ export class RedisOptimizedQueryBuilder {
       // Проверяем Redis кэш
       const cachedResult = await this.redisCache.get(cacheKey);
       if (cachedResult) {
-        if (span) this.performanceMonitor?.finishSpan(span, 'success');
+        this.finishSpan(span);
         await enhancedDbLogger.endOperation(operationId, true);
         
         enhancedDbLogger.debug('✅ Redis cache hit для MixRequest поиска', { cacheKey });
@@ -469,11 +495,11 @@ export class RedisOptimizedQueryBuilder {
           WHERE ${whereClause}
         `;
 
-        const [countResult] = await this.executeQuery(countQuery, replacements, {
+        const countResult = await this.executeQuery<AggregationResult[]>(countQuery, replacements, {
           cache: false
         });
         
-        total = Number(countResult?.total || 0);
+        total = Number(countResult[0]?.total || 0);
         
         // Кэшируем count с коротким TTL
         await this.redisCache.set(countCacheKey, total, 300); // 5 минут
@@ -505,7 +531,7 @@ export class RedisOptimizedQueryBuilder {
       
       this.registerInvalidationTags(cacheKey, invalidationTags);
 
-      if (span) this.performanceMonitor?.finishSpan(span, 'success');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, true);
 
       enhancedDbLogger.debug('💾 MixRequest поиск кэширован в Redis', { 
@@ -517,13 +543,13 @@ export class RedisOptimizedQueryBuilder {
       return result;
 
     } catch (error) {
-      if (span) this.performanceMonitor?.finishSpan(span, 'error');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, false);
       await enhancedDbLogger.logError(error as Error);
       throw new DatabaseError(
         'Ошибка поиска MixRequest с relations',
         ErrorCode.QUERY_FAILED,
-        { operation: 'findMixRequestsWithRelations', filters }
+        { operation: 'findMixRequestsWithRelations', additionalInfo: { filters } }
       );
     }
   }
@@ -537,7 +563,7 @@ export class RedisOptimizedQueryBuilder {
     limit: number = 10
   ): Promise<any[]> {
     const operationId = await enhancedDbLogger.startOperation('findWalletsWithSufficientBalance');
-    const span = this.performanceMonitor?.startSpan('redis_db_wallet_find_balance', 'database');
+    const span = this.createSpan('redis_db_wallet_find_balance', 'database');
 
     try {
       const cacheKey = `wallets_balance_${currency}_${minAmount}_${limit}`;
@@ -546,7 +572,7 @@ export class RedisOptimizedQueryBuilder {
       // Проверяем Redis кэш (короткий TTL для балансов)
       const cachedResult = await this.redisCache.get(cacheKey);
       if (cachedResult) {
-        if (span) this.performanceMonitor?.finishSpan(span, 'success');
+        this.finishSpan(span);
         await enhancedDbLogger.endOperation(operationId, true);
         
         enhancedDbLogger.debug('✅ Redis cache hit для Wallet balance поиска', { cacheKey });
@@ -584,7 +610,7 @@ export class RedisOptimizedQueryBuilder {
       
       this.registerInvalidationTags(cacheKey, invalidationTags);
 
-      if (span) this.performanceMonitor?.finishSpan(span, 'success');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, true);
 
       enhancedDbLogger.debug('💾 Wallet balance поиск кэширован в Redis', { 
@@ -596,13 +622,13 @@ export class RedisOptimizedQueryBuilder {
       return rows;
 
     } catch (error) {
-      if (span) this.performanceMonitor?.finishSpan(span, 'error');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, false);
       await enhancedDbLogger.logError(error as Error);
       throw new DatabaseError(
         'Ошибка поиска кошельков с достаточным балансом',
         ErrorCode.QUERY_FAILED,
-        { operation: 'findWalletsWithSufficientBalance', currency, minAmount }
+        { operation: 'findWalletsWithSufficientBalance', additionalInfo: { currency, minAmount } }
       );
     }
   }
@@ -636,13 +662,19 @@ export class RedisOptimizedQueryBuilder {
       }
 
       // Выполняем основной запрос
-      const result = await this.sequelize.query(query, {
+      const sequelizeOptions: any = {
         replacements,
         type: QueryTypes.SELECT,
         transaction: options.transaction,
-        timeout: options.timeout,
         raw: options.raw !== false
-      });
+      };
+      
+      // Добавляем timeout если поддерживается
+      if (options.timeout) {
+        sequelizeOptions.timeout = options.timeout;
+      }
+      
+      const result = await this.sequelize.query(query, sequelizeOptions);
 
       const queryTime = Date.now() - startTime;
 

@@ -39,6 +39,23 @@ export interface AggregationResult {
   [key: string]: number | string | null;
 }
 
+export interface MixRequestStatsResult {
+  total: number | string;
+  completed: number | string;
+  pending: number | string;
+  deposited: number | string;
+  pooling: number | string;
+  mixing: number | string;
+  failed: number | string;
+  cancelled: number | string;
+}
+
+export interface WalletStatsResult {
+  total: number | string;
+  active_wallets: number | string;
+  locked_wallets: number | string;
+}
+
 export interface PaginatedResult<T> {
   rows: T[];
   count: number;
@@ -88,7 +105,8 @@ class QueryCache {
   }
 
   invalidate(pattern: string): void {
-    for (const key of this.cache.keys()) {
+    const keys = Array.from(this.cache.keys());
+    for (const key of keys) {
       if (key.includes(pattern)) {
         this.cache.delete(key);
       }
@@ -113,13 +131,35 @@ class QueryCache {
 export class OptimizedQueryBuilder {
   private sequelize: Sequelize;
   private cache: QueryCache;
-  private performanceMonitor?: PerformanceMonitor;
+  private performanceMonitor?: PerformanceMonitor; // Для совместимости, используется через createSpan/finishSpan
   private queryStats = new Map<string, QueryPerformanceStats>();
+  private activeSpans = new Map<string, { startTime: number; operation: string }>();
 
   constructor(sequelize: Sequelize, performanceMonitor?: PerformanceMonitor) {
     this.sequelize = sequelize;
     this.cache = new QueryCache();
     this.performanceMonitor = performanceMonitor;
+  }
+
+  /**
+   * Создание span для трассировки операций
+   */
+  private createSpan(operation: string, _category: string): string {
+    const spanId = `${operation}_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    this.activeSpans.set(spanId, { startTime: Date.now(), operation });
+    return spanId;
+  }
+
+  /**
+   * Завершение span для трассировки операций
+   */
+  private finishSpan(spanId: string): void {
+    const span = this.activeSpans.get(spanId);
+    if (span) {
+      const duration = Date.now() - span.startTime;
+      enhancedDbLogger.info(`🕐 Operation ${span.operation} completed`, { duration: `${duration}ms` });
+      this.activeSpans.delete(spanId);
+    }
   }
 
   /**
@@ -138,14 +178,14 @@ export class OptimizedQueryBuilder {
     successRate: number;
   }> {
     const operationId = await enhancedDbLogger.startOperation('getMixRequestStatistics');
-    const span = this.performanceMonitor?.startSpan('db_mix_request_stats', 'database');
+    const span = this.createSpan('db_mix_request_stats', 'database');
 
     try {
       const whereClause = this.buildDateFilter(filters.startDate, filters.endDate);
       const currencyFilter = filters.currency ? `AND currency = :currency` : '';
 
       // Агрегированный запрос вместо загрузки всех записей
-      const [statsResult] = await this.executeQuery<AggregationResult[]>(`
+      const statsResult = await this.executeQuery<MixRequestStatsResult[]>(`
         SELECT 
           COUNT(*) as total,
           SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed,
@@ -188,17 +228,18 @@ export class OptimizedQueryBuilder {
       });
 
       // Формируем результат
-      const total = Number(statsResult[0]?.total || 0);
-      const completed = Number(statsResult[0]?.completed || 0);
+      const firstResult = statsResult[0] as MixRequestStatsResult;
+      const total = Number(firstResult?.total || 0);
+      const completed = Number(firstResult?.completed || 0);
 
       const byStatus = {
-        COMPLETED: Number(statsResult[0]?.completed || 0),
-        PENDING: Number(statsResult[0]?.pending || 0),
-        DEPOSITED: Number(statsResult[0]?.deposited || 0),
-        POOLING: Number(statsResult[0]?.pooling || 0),
-        MIXING: Number(statsResult[0]?.mixing || 0),
-        FAILED: Number(statsResult[0]?.failed || 0),
-        CANCELLED: Number(statsResult[0]?.cancelled || 0)
+        COMPLETED: Number(firstResult?.completed || 0),
+        PENDING: Number(firstResult?.pending || 0),
+        DEPOSITED: Number(firstResult?.deposited || 0),
+        POOLING: Number(firstResult?.pooling || 0),
+        MIXING: Number(firstResult?.mixing || 0),
+        FAILED: Number(firstResult?.failed || 0),
+        CANCELLED: Number(firstResult?.cancelled || 0)
       };
 
       const byCurrency: Record<string, number> = {};
@@ -214,7 +255,7 @@ export class OptimizedQueryBuilder {
 
       const successRate = total > 0 ? (completed / total) * 100 : 0;
 
-      if (span) this.performanceMonitor?.finishSpan(span, 'success');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, true);
 
       return {
@@ -227,13 +268,13 @@ export class OptimizedQueryBuilder {
       };
 
     } catch (error) {
-      if (span) this.performanceMonitor?.finishSpan(span, 'error');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, false);
       await enhancedDbLogger.logError(error as Error);
       throw new DatabaseError(
         'Ошибка получения статистики MixRequest',
         ErrorCode.QUERY_FAILED,
-        { operation: 'getMixRequestStatistics', filters }
+        { operation: 'getMixRequestStatistics', additionalInfo: { filters } }
       );
     }
   }
@@ -250,11 +291,11 @@ export class OptimizedQueryBuilder {
     lockedWallets: number;
   }> {
     const operationId = await enhancedDbLogger.startOperation('getWalletStatistics');
-    const span = this.performanceMonitor?.startSpan('db_wallet_stats', 'database');
+    const span = this.createSpan('db_wallet_stats', 'database');
 
     try {
       // Основная статистика
-      const [mainStats] = await this.executeQuery<AggregationResult[]>(`
+      const mainStatsResult = await this.executeQuery<WalletStatsResult[]>(`
         SELECT 
           COUNT(*) as total,
           SUM(CASE WHEN is_active = true THEN 1 ELSE 0 END) as active_wallets,
@@ -307,20 +348,22 @@ export class OptimizedQueryBuilder {
         totalBalance[currency] = Number(stat.total_balance || 0);
       });
 
-      if (span) this.performanceMonitor?.finishSpan(span, 'success');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, true);
 
+      const mainStats = mainStatsResult[0] as WalletStatsResult;
+      
       return {
-        total: Number(mainStats[0]?.total || 0),
+        total: Number(mainStats?.total || 0),
         byType,
         byCurrency,
         totalBalance,
-        activeWallets: Number(mainStats[0]?.active_wallets || 0),
-        lockedWallets: Number(mainStats[0]?.locked_wallets || 0)
+        activeWallets: Number(mainStats?.active_wallets || 0),
+        lockedWallets: Number(mainStats?.locked_wallets || 0)
       };
 
     } catch (error) {
-      if (span) this.performanceMonitor?.finishSpan(span, 'error');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, false);
       await enhancedDbLogger.logError(error as Error);
       throw new DatabaseError(
@@ -345,7 +388,7 @@ export class OptimizedQueryBuilder {
     limit?: number;
   }): Promise<PaginatedResult<any>> {
     const operationId = await enhancedDbLogger.startOperation('findMixRequestsWithRelations');
-    const span = this.performanceMonitor?.startSpan('db_mix_request_find', 'database');
+    const span = this.createSpan('db_mix_request_find', 'database');
 
     try {
       const page = filters.page || 1;
@@ -442,7 +485,7 @@ export class OptimizedQueryBuilder {
       const total = Number(countResult[0]?.total || 0);
       const totalPages = Math.ceil(total / limit);
 
-      if (span) this.performanceMonitor?.finishSpan(span, 'success');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, true);
 
       return {
@@ -457,13 +500,13 @@ export class OptimizedQueryBuilder {
       };
 
     } catch (error) {
-      if (span) this.performanceMonitor?.finishSpan(span, 'error');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, false);
       await enhancedDbLogger.logError(error as Error);
       throw new DatabaseError(
         'Ошибка поиска MixRequest с relations',
         ErrorCode.QUERY_FAILED,
-        { operation: 'findMixRequestsWithRelations', filters }
+        { operation: 'findMixRequestsWithRelations', additionalInfo: { filters } }
       );
     }
   }
@@ -477,7 +520,7 @@ export class OptimizedQueryBuilder {
     limit: number = 10
   ): Promise<any[]> {
     const operationId = await enhancedDbLogger.startOperation('findWalletsWithSufficientBalance');
-    const span = this.performanceMonitor?.startSpan('db_wallet_find_balance', 'database');
+    const span = this.createSpan('db_wallet_find_balance', 'database');
 
     try {
       const query = `
@@ -507,19 +550,19 @@ export class OptimizedQueryBuilder {
         cacheTTL: 60 // Короткое кэширование для балансов
       });
 
-      if (span) this.performanceMonitor?.finishSpan(span, 'success');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, true);
 
       return rows;
 
     } catch (error) {
-      if (span) this.performanceMonitor?.finishSpan(span, 'error');
+      this.finishSpan(span);
       await enhancedDbLogger.endOperation(operationId, false);
       await enhancedDbLogger.logError(error as Error);
       throw new DatabaseError(
         'Ошибка поиска кошельков с достаточным балансом',
         ErrorCode.QUERY_FAILED,
-        { operation: 'findWalletsWithSufficientBalance', currency, minAmount }
+        { operation: 'findWalletsWithSufficientBalance', additionalInfo: { currency, minAmount } }
       );
     }
   }
@@ -564,7 +607,7 @@ export class OptimizedQueryBuilder {
         slowQueries: Number(slowQueries[0]?.slow_queries_count || 0),
         totalQueries: stats.length,
         cacheHitRate: cacheStats.hitRate,
-        connectionStats: connectionStats.reduce((acc, stat) => {
+        connectionStats: connectionStats.reduce((acc: any, stat: any) => {
           acc[stat.Variable_name] = stat.Value;
           return acc;
         }, {} as any)
@@ -616,13 +659,19 @@ export class OptimizedQueryBuilder {
       }
 
       // Выполняем основной запрос
-      const result = await this.sequelize.query(query, {
+      const sequelizeOptions: any = {
         replacements,
         type: QueryTypes.SELECT,
         transaction: options.transaction,
-        timeout: options.timeout,
         raw: options.raw !== false
-      });
+      };
+      
+      // Добавляем timeout если поддерживается
+      if (options.timeout) {
+        sequelizeOptions.timeout = options.timeout;
+      }
+      
+      const result = await this.sequelize.query(query, sequelizeOptions);
 
       const queryTime = Date.now() - startTime;
 

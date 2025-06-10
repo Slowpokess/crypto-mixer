@@ -268,7 +268,7 @@ export class DatabaseManager extends EventEmitter {
     sql: string,
     replacements?: Record<string, any>,
     options?: {
-      type: QueryTypes.INSERT | QueryTypes.UPDATE | QueryTypes.DELETE | QueryTypes.BULKUPDATE | QueryTypes.BULKDELETE;
+      type: QueryTypes.INSERT | QueryTypes.UPDATE | QueryTypes.DELETE | QueryTypes.BULKUPDATE | QueryTypes.BULKDELETE | QueryTypes.RAW;
       transaction?: any;
       confirmOperation: boolean;
     }

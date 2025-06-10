@@ -1,4 +1,4 @@
-import { QueryInterface, DataTypes } from 'sequelize';
+import { QueryInterface, DataTypes, QueryTypes } from 'sequelize';
 
 /**
  * Миграция для добавления полей шифрования чувствительных данных
@@ -225,12 +225,12 @@ export const up = async (queryInterface: QueryInterface, Sequelize: any): Promis
 
     for (const field of encryptionFields) {
       // Получаем количество записей для миграции
-      const [countResult] = await queryInterface.sequelize.query(
+      const countResults = await queryInterface.sequelize.query(
         `SELECT COUNT(*) as count FROM ${field.table}`,
-        { type: queryInterface.sequelize.QueryTypes.SELECT }
+        { type: QueryTypes.SELECT }
       );
       
-      const totalRecords = (countResult as any).count || 0;
+      const totalRecords = (countResults[0] as any)?.count || 0;
 
       await queryInterface.bulkInsert('encryption_metadata', [{
         id: `${field.table}_${field.field}_${Date.now()}_${Math.random().toString(36).substring(2)}`,

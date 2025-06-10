@@ -394,31 +394,6 @@ export const BACKUP_CONSTANTS = {
 };
 
 /**
- * Экспорт всех типов для TypeScript
+ * Экспорт типов backup системы объединен в основные экспорты выше.
+ * Все типы доступны через соответствующие модули без дублирования.
  */
-export type {
-  BackupConfig,
-  BackupMetadata,
-  BackupComponent,
-  RestoreOptions,
-  BackupReport,
-  DisasterRecoveryConfig,
-  RecoveryPlan,
-  RecoveryStep,
-  ValidationStep,
-  DisasterEvent,
-  RecoveryExecution,
-  SystemHealthStatus,
-  ComponentHealth,
-  BackupMonitoringConfig,
-  AlertChannel,
-  EscalationPolicy,
-  EscalationLevel,
-  AlertSeverity,
-  Alert,
-  AlertNotification,
-  BackupMetrics,
-  DashboardData,
-  IntegratedBackupSystemConfig,
-  SystemStatus
-} from './BackupIntegration';

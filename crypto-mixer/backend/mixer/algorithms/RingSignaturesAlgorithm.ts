@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { CryptographicUtils } from './CryptographicUtils';
-import { memoryManager } from '../../utils/MemoryManager';
+import { memoryManager, BoundedMap } from '../../utils/MemoryManager';
 import * as crypto from 'crypto';
 
 export interface RingKey {
@@ -82,8 +82,8 @@ export interface RingConfig {
 export class RingSignaturesAlgorithm extends EventEmitter {
   private config: RingConfig;
   private keyImageRegistry: Set<string>;
-  private decoyDatabase: Map<string, RingKey[]>;
-  private stealthAddressCache: Map<string, StealthAddress>;
+  private decoyDatabase: BoundedMap<string, RingKey[]>;
+  private stealthAddressCache: BoundedMap<string, StealthAddress>;
   private logger: any;
 
   constructor(dependencies: any = {}) {
@@ -407,7 +407,7 @@ export class RingSignaturesAlgorithm extends EventEmitter {
       const ringSignatures: RingSignature[] = [];
 
       // Создаем ring signature для каждого входа
-      for (const [index, input] of inputs.entries()) {
+      for (const [index, input] of Array.from(inputs.entries())) {
         let ringKeys = input.ringKeys;
         
         // Генерируем decoy keys если не предоставлены
@@ -514,7 +514,7 @@ export class RingSignaturesAlgorithm extends EventEmitter {
       }
 
       // Проверяем каждую ring signature
-      for (const [index, input] of transaction.inputs.entries()) {
+      for (const [index, input] of Array.from(transaction.inputs.entries())) {
         const txMessage = this._createTransactionMessage(
           transaction.inputs.map(inp => ({
             realKey: inp.ringKeys[inp.realOutputIndex],
@@ -550,7 +550,7 @@ export class RingSignaturesAlgorithm extends EventEmitter {
 
       // Проверяем range proofs если используются confidential transactions
       if (this.config.confidentialTransactions) {
-        for (const [index, output] of transaction.outputs.entries()) {
+        for (const [index, output] of Array.from(transaction.outputs.entries())) {
           if (output.rangeProof && output.commitment) {
             const isValidProof = await this._verifyRangeProof(
               output.rangeProof,

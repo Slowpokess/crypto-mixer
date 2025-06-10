@@ -187,17 +187,22 @@ class ConnectionPoolManager extends events_1.EventEmitter {
      */
     async getPoolStats() {
         try {
-            const masterPoolStats = this.masterPool.connectionManager.pool;
+            const sequelizeInternal = this.masterPool;
+            const masterPoolStats = sequelizeInternal.connectionManager?.pool;
+            if (!masterPoolStats) {
+                logger_1.enhancedDbLogger.warn('⚠️ Не удалось получить статистику пула, используем кешированные данные');
+                return { ...this.stats };
+            }
             this.stats = {
-                totalConnections: masterPoolStats.size,
-                activeConnections: masterPoolStats.using,
-                idleConnections: masterPoolStats.size - masterPoolStats.using,
-                waitingClients: masterPoolStats.waiting,
+                totalConnections: masterPoolStats.size || 0,
+                activeConnections: masterPoolStats.using || 0,
+                idleConnections: (masterPoolStats.size || 0) - (masterPoolStats.using || 0),
+                waitingClients: masterPoolStats.waiting || 0,
                 totalRequests: this.stats.totalRequests,
                 failedRequests: this.stats.failedRequests,
                 averageAcquireTime: this.calculateAverageAcquireTime(),
-                peakConnections: Math.max(this.stats.peakConnections, masterPoolStats.size),
-                poolUtilization: masterPoolStats.size > 0 ? (masterPoolStats.using / masterPoolStats.size) * 100 : 0
+                peakConnections: Math.max(this.stats.peakConnections, masterPoolStats.size || 0),
+                poolUtilization: (masterPoolStats.size || 0) > 0 ? ((masterPoolStats.using || 0) / (masterPoolStats.size || 0)) * 100 : 0
             };
             return { ...this.stats };
         }
@@ -313,7 +318,8 @@ class ConnectionPoolManager extends events_1.EventEmitter {
             const stats = await this.getPoolStats();
             // Если утилизация высокая и есть ожидающие клиенты
             if (stats.poolUtilization > 80 && stats.waitingClients > 0) {
-                const currentMax = this.masterPool.options.pool?.max || this.config.maxConnections;
+                const sequelizeInternal = this.masterPool;
+                const currentMax = sequelizeInternal.options?.pool?.max || this.config.maxConnections;
                 const newMax = Math.min(currentMax + this.config.maxPoolSizeIncrease, this.config.maxConnections * 2 // Не превышаем удвоенный максимум
                 );
                 if (newMax > currentMax) {
@@ -329,7 +335,8 @@ class ConnectionPoolManager extends events_1.EventEmitter {
             }
             // Если утилизация низкая длительное время
             else if (stats.poolUtilization < this.config.poolSizeDecreaseThreshold * 100) {
-                const currentMax = this.masterPool.options.pool?.max || this.config.maxConnections;
+                const sequelizeInternal = this.masterPool;
+                const currentMax = sequelizeInternal.options?.pool?.max || this.config.maxConnections;
                 const newMax = Math.max(Math.floor(currentMax * 0.8), this.config.minConnections);
                 if (newMax < currentMax) {
                     logger_1.enhancedDbLogger.info('📉 Уменьшаем размер пула', {

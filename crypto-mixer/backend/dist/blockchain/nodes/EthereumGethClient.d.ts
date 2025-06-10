@@ -16,6 +16,11 @@ interface EthereumTransaction {
     r: string;
     s: string;
     v: string;
+    type?: string;
+    accessList?: any[];
+    maxFeePerGas?: string;
+    maxPriorityFeePerGas?: string;
+    yParity?: string;
 }
 interface EthereumBlock {
     number: number;
@@ -37,6 +42,9 @@ interface EthereumBlock {
     timestamp: number;
     transactions: string[] | EthereumTransaction[];
     uncles: string[];
+    baseFeePerGas?: string;
+    withdrawals?: any[];
+    withdrawalsRoot?: string;
 }
 interface TransactionReceipt {
     transactionHash: string;
@@ -52,6 +60,8 @@ interface TransactionReceipt {
     logsBloom: string;
     status: boolean;
     effectiveGasPrice: string;
+    type?: string;
+    root?: string;
 }
 interface EthereumSyncStatus {
     startingBlock: number;

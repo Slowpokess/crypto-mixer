@@ -12,7 +12,6 @@
 import { Sequelize, Transaction, QueryTypes } from 'sequelize';
 import { enhancedDbLogger } from '../logger';
 import { MixRequest } from '../models/MixRequest';
-import { Wallet } from '../models/Wallet';
 import { OutputTransaction } from '../models/OutputTransaction';
 import { DepositAddress } from '../models/DepositAddress';
 import { AuditLog } from '../models/AuditLog';
@@ -516,7 +515,7 @@ export class DataRecoveryManager extends EventEmitter {
     try {
       // Создаем backup перед восстановлением
       if (this.config.createRecoveryBackups) {
-        await this.backupManager.createBackup('pre_recovery_' + Date.now());
+        await this.backupManager.createFullBackup('pre_recovery_' + Date.now());
       }
 
       let fixedCount = 0;
@@ -538,7 +537,7 @@ export class DataRecoveryManager extends EventEmitter {
                 affectedRecords: issue.affectedRecords,
                 fix: issue.suggestedFix
               }
-            }, transaction);
+            });
 
           } catch (fixError) {
             enhancedDbLogger.error('❌ Ошибка применения автофикса', {
@@ -615,7 +614,7 @@ export class DataRecoveryManager extends EventEmitter {
         // Отменяем запрос если он еще в статусе PENDING
         await mixRequest.update({
           status: 'CANCELLED',
-          errorMessage: 'Auto-cancelled due to missing deposit address'
+          notes: 'Auto-cancelled due to missing deposit address'
         }, { transaction });
         
         enhancedDbLogger.info('🔧 Отменен MixRequest без DepositAddress', { id: recordId });
@@ -647,10 +646,10 @@ export class DataRecoveryManager extends EventEmitter {
       const mixRequest = await MixRequest.findByPk(recordId, { transaction });
       if (mixRequest) {
         if (issue.description.includes('застрял в статусе MIXING')) {
-          // Возвращаем в POOLING для повторной обработки
+          // Возвращаем в PENDING для повторной обработки
           await mixRequest.update({
-            status: 'POOLING',
-            errorMessage: 'Auto-reset from stuck MIXING status'
+            status: 'PENDING',
+            notes: 'Auto-reset from stuck MIXING status'
           }, { transaction });
           
           enhancedDbLogger.info('🔧 Сброшен статус застрявшего MixRequest', { id: recordId });
@@ -775,7 +774,7 @@ export class DataRecoveryManager extends EventEmitter {
       
       // Создаем backup перед ручным восстановлением
       if (this.config.createRecoveryBackups) {
-        await this.backupManager.createBackup('pre_manual_recovery_' + Date.now());
+        await this.backupManager.createFullBackup('pre_manual_recovery_' + Date.now());
       }
 
       // Здесь будет логика ручного восстановления

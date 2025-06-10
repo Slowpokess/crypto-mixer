@@ -1,0 +1,253 @@
+# Vertical Pod Autoscaler Configuration для Crypto Mixer
+# VPA автоматически рекомендует и может устанавливать оптимальные CPU и memory requests/limits
+
+# VPA для Mixer API
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: mixer-api-vpa
+  namespace: crypto-mixer
+  labels:
+    app: mixer-api
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mixer-api
+  updatePolicy:
+    updateMode: "Auto"  # Автоматическое применение рекомендаций
+  resourcePolicy:
+    containerPolicies:
+    - containerName: mixer-api
+      minAllowed:
+        cpu: 100m
+        memory: 256Mi
+      maxAllowed:
+        cpu: 4
+        memory: 4Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+
+---
+# VPA для Blockchain Service
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: blockchain-service-vpa
+  namespace: crypto-mixer
+  labels:
+    app: blockchain-service
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: blockchain-service
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: blockchain-service
+      minAllowed:
+        cpu: 250m
+        memory: 512Mi
+      maxAllowed:
+        cpu: 8
+        memory: 8Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+
+---
+# VPA для Wallet Service
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: wallet-service-vpa
+  namespace: crypto-mixer
+  labels:
+    app: wallet-service
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wallet-service
+  updatePolicy:
+    updateMode: "Initial"  # Только для новых подов (более консервативно для критичного сервиса)
+  resourcePolicy:
+    containerPolicies:
+    - containerName: wallet-service
+      minAllowed:
+        cpu: 500m
+        memory: 1Gi
+      maxAllowed:
+        cpu: 4
+        memory: 4Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+
+---
+# VPA для Scheduler Service
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: scheduler-service-vpa
+  namespace: crypto-mixer
+  labels:
+    app: scheduler-service
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: scheduler-service
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: scheduler-service
+      minAllowed:
+        cpu: 100m
+        memory: 256Mi
+      maxAllowed:
+        cpu: 2
+        memory: 2Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+
+---
+# VPA для Frontend
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: frontend-vpa
+  namespace: crypto-mixer
+  labels:
+    app: frontend
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: frontend
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: frontend
+      minAllowed:
+        cpu: 50m
+        memory: 128Mi
+      maxAllowed:
+        cpu: 1
+        memory: 1Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+
+---
+# VPA для Monitoring Service
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: monitoring-service-vpa
+  namespace: crypto-mixer
+  labels:
+    app: monitoring-service
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: monitoring-service
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: monitoring-service
+      minAllowed:
+        cpu: 100m
+        memory: 256Mi
+      maxAllowed:
+        cpu: 2
+        memory: 2Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+
+---
+# VPA для Redis (только рекомендации, не автоматическое применение)
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: redis-vpa
+  namespace: crypto-mixer
+  labels:
+    app: redis
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: redis
+  updatePolicy:
+    updateMode: "Off"  # Только рекомендации для Redis
+  resourcePolicy:
+    containerPolicies:
+    - containerName: redis
+      minAllowed:
+        cpu: 100m
+        memory: 256Mi
+      maxAllowed:
+        cpu: 2
+        memory: 4Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+
+---
+# VPA для Prometheus (только рекомендации)
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: prometheus-vpa
+  namespace: crypto-mixer
+  labels:
+    app: prometheus
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: prometheus
+  updatePolicy:
+    updateMode: "Off"  # Только рекомендации
+  resourcePolicy:
+    containerPolicies:
+    - containerName: prometheus
+      minAllowed:
+        cpu: 500m
+        memory: 1Gi
+      maxAllowed:
+        cpu: 4
+        memory: 8Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+
+---
+# VPA для Grafana
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: grafana-vpa
+  namespace: crypto-mixer
+  labels:
+    app: grafana
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: grafana
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: grafana
+      minAllowed:
+        cpu: 100m
+        memory: 256Mi
+      maxAllowed:
+        cpu: 1
+        memory: 2Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits

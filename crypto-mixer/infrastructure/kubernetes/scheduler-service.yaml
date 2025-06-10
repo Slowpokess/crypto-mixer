@@ -46,6 +46,12 @@ spec:
             port: 3002
           initialDelaySeconds: 5
           periodSeconds: 5
+      # Безопасность
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1002
+        fsGroup: 1002
+      serviceAccountName: scheduler-service-account
 
 ---
 # Scheduler Service
@@ -91,3 +97,69 @@ spec:
                 memory: "512Mi"
                 cpu: "500m"
           restartPolicy: OnFailure
+
+---
+# Scheduler Service HPA (только для основного сервиса, не CronJob)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: scheduler-service-hpa
+  namespace: crypto-mixer
+  labels:
+    app: scheduler-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: scheduler-service
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 85
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 120
+
+---
+# PodDisruptionBudget для Scheduler Service
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: scheduler-service-pdb
+  namespace: crypto-mixer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: scheduler-service
+
+---
+# ServiceAccount для Scheduler Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scheduler-service-account
+  namespace: crypto-mixer
+  labels:
+    app: scheduler-service

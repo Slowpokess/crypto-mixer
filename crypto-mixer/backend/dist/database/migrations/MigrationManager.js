@@ -59,9 +59,9 @@ class MigrationManager {
         await this.createMigrationsTable();
         // БЕЗОПАСНОСТЬ: Валидация имени таблицы
         this.validateTableName(this.migrationTableName);
-        const [results] = await this.sequelize.query('SELECT * FROM ?? ORDER BY executed_at ASC', {
+        const results = await this.sequelize.query('SELECT * FROM ?? ORDER BY executed_at ASC', {
             replacements: [this.migrationTableName],
-            type: this.sequelize.QueryTypes.SELECT
+            type: sequelize_1.QueryTypes.SELECT
         });
         return results;
     }

@@ -101,7 +101,10 @@ class BlockchainTransaction extends sequelize_1.Model {
             'BTC': 600, // 10 минут
             'ETH': 13, // 13 секунд
             'USDT': 13, // На Ethereum
-            'SOL': 0.4 // 400ms
+            'SOL': 0.4, // 400ms
+            'LTC': 150, // 2.5 минуты
+            'DASH': 157, // ~2.6 минуты
+            'ZEC': 150 // 2.5 минуты
         };
         return blockTimes[this.currency] || 600;
     }

@@ -163,7 +163,7 @@ class SolanaRpcClient {
             owner: accountInfo.owner.toBase58(),
             lamports: accountInfo.lamports,
             data: accountInfo.data,
-            rentEpoch: accountInfo.rentEpoch
+            rentEpoch: accountInfo.rentEpoch ?? 0 // Если undefined, используем 0 как дефолтное значение
         };
     }
     /**
@@ -330,7 +330,7 @@ class SolanaRpcClient {
      */
     async disconnect() {
         this.stopHealthCheck();
-        this.isConnected = false;
+        this._isConnected = false;
     }
     /**
      * Получение статистики производительности

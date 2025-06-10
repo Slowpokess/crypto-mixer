@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import * as crypto from 'crypto';
 
 // Request ID middleware for tracking
-export const requestId = (req: Request, res: Response, next: NextFunction) => {
+export const requestId = (req: Request, res: Response, next: NextFunction): void => {
   const id = crypto.randomUUID();
   req.headers['x-request-id'] = id;
   res.setHeader('X-Request-ID', id);
@@ -10,7 +10,7 @@ export const requestId = (req: Request, res: Response, next: NextFunction) => {
 };
 
 // Request logging middleware for security auditing
-export const securityLogger = (req: Request, res: Response, next: NextFunction) => {
+export const securityLogger = (req: Request, res: Response, next: NextFunction): void => {
   const startTime = Date.now();
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress;
   
@@ -70,7 +70,7 @@ export const securityLogger = (req: Request, res: Response, next: NextFunction) 
 };
 
 // Input validation for common attack vectors
-export const inputSanitization = (req: Request, res: Response, next: NextFunction) => {
+export const inputSanitization = (req: Request, res: Response, next: NextFunction): void => {
   const dangerous_patterns = [
     // SQL Injection patterns
     /(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|UNION)\b)/gi,
@@ -122,9 +122,10 @@ export const inputSanitization = (req: Request, res: Response, next: NextFunctio
         timestamp: new Date().toISOString()
       });
       
-      return res.status(400).json({
+      res.status(400).json({
         error: 'Invalid input detected'
       });
+      return;
     }
   }
   

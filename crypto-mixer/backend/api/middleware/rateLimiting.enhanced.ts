@@ -1,6 +1,20 @@
 import { Request, Response, NextFunction } from 'express';
-import { createClient, RedisClientType } from 'redis';
 import { enhancedDbLogger } from '../../utils/logger';
+
+// RUSSIAN: Импорт Redis с fallback для случаев, когда модуль недоступен
+let createClient: any = null;
+let RedisClientType: any = null;
+
+try {
+  const redis = require('redis');
+  createClient = redis.createClient;
+  RedisClientType = redis.RedisClientType;
+} catch (error) {
+  enhancedDbLogger.warn('📦 Redis модуль недоступен, используется memory fallback', { error: (error as Error).message });
+}
+
+// RUSSIAN: Типы импортируются из отдельного файла типов
+import '../../types/express';
 
 /**
  * Расширенная система rate limiting для crypto-mixer
@@ -90,7 +104,7 @@ export interface DDoSMetrics {
  */
 export class EnhancedRateLimiter {
   private config: RateLimitConfig;
-  private redisClient: RedisClientType | null = null;
+  private redisClient: any | null = null; // RUSSIAN: Используем any для совместимости с dynamic import
   private memoryStore: Map<string, any> = new Map();
   private ddosMetrics: DDoSMetrics;
   private blockedIPs: Set<string> = new Set();
@@ -115,8 +129,8 @@ export class EnhancedRateLimiter {
    * RUSSIAN: Инициализация Redis для распределенного rate limiting
    */
   private async initializeRedis(): Promise<void> {
-    if (!this.config.redis.enabled) {
-      enhancedDbLogger.info('🔒 Rate Limiting: Redis отключен, используется локальное хранилище');
+    if (!this.config.redis.enabled || !createClient) {
+      enhancedDbLogger.info('🔒 Rate Limiting: Redis отключен или недоступен, используется локальное хранилище');
       return;
     }
 
@@ -130,8 +144,8 @@ export class EnhancedRateLimiter {
         }
       });
 
-      this.redisClient.on('error', (error) => {
-        enhancedDbLogger.error('❌ Redis Rate Limiter ошибка', { error });
+      this.redisClient.on('error', (error: Error) => {
+        enhancedDbLogger.error('❌ Redis Rate Limiter ошибка', { error: error.message });
         // RUSSIAN: При ошибке Redis переключаемся на локальное хранилище
         this.redisClient = null;
       });
@@ -142,7 +156,9 @@ export class EnhancedRateLimiter {
 
       await this.redisClient.connect();
     } catch (error) {
-      enhancedDbLogger.error('❌ Не удалось подключиться к Redis для Rate Limiting', { error });
+      enhancedDbLogger.error('❌ Не удалось подключиться к Redis для Rate Limiting', { 
+        error: error instanceof Error ? error.message : String(error) 
+      });
       this.redisClient = null;
     }
   }
@@ -332,7 +348,7 @@ export class EnhancedRateLimiter {
     }
 
     const ip = this.getClientIP(req);
-    const user = req.user ? `user:${req.user.id}` : `ip:${ip}`;
+    const user = req.user && 'id' in req.user ? `user:${req.user.id}` : `ip:${ip}`;
     const endpoint = this.getEndpointPattern(req.path);
     
     return `${this.config.redis.keyPrefix}:${user}:${endpoint}`;
@@ -861,7 +877,7 @@ export const defaultRateLimitConfig: RateLimitConfig = {
   user: {
     windowMs: 60 * 1000,       // 1 минута
     maxRequests: 100,          // 100 запросов на пользователя
-    keyGenerator: (req) => `user:${req.user?.id || 'anonymous'}`
+    keyGenerator: (req) => `user:${req.user && 'id' in req.user ? req.user.id : 'anonymous'}`
   },
   
   critical: {

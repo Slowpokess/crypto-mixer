@@ -1,9 +1,8 @@
 import { EventEmitter } from 'events';
 import { torManager } from './TorManager';
 import { torBlockchainClient } from '../blockchain/TorBlockchainClient';
-import { logger } from './logger';
-import axios from 'axios';
-import net from 'net';
+import logger from './logger';
+import * as net from 'net';
 
 /**
  * Расширенная служба мониторинга Tor для CryptoMixer
@@ -32,7 +31,7 @@ export interface TorServiceStatus {
 
 export interface TorMonitoringStats {
   services: TorServiceStatus[];
-  overallHealth: 'healthy' | 'degraded' | 'critical';
+  overallHealth: 'healthy' | 'degraded' | 'critical' | 'unknown';
   totalRequests: number;
   successfulRequests: number;
   failedRequests: number;
@@ -44,13 +43,26 @@ export interface TorMonitoringStats {
 
 export class TorMonitoringService extends EventEmitter {
   private services: Map<string, TorServiceStatus> = new Map();
-  private monitoringInterval: NodeJS.Timer | null = null;
-  private deepCheckInterval: NodeJS.Timer | null = null;
+  private monitoringInterval: NodeJS.Timeout | null = null;
+  private deepCheckInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
   private stats: TorMonitoringStats;
   private checkIntervalMs = 30000; // 30 секунд
   private deepCheckIntervalMs = 300000; // 5 минут
   private startTime = new Date();
+
+  /**
+   * Утилита для безопасного извлечения сообщения об ошибке
+   */
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    if (typeof error === 'string') {
+      return error;
+    }
+    return String(error);
+  }
 
   // Список onion адресов для проверки
   private readonly ONION_SERVICES = [
@@ -296,7 +308,7 @@ export class TorMonitoringService extends EventEmitter {
 
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      this.updateServiceStatus(serviceName, 'critical', responseTime, error.message);
+      this.updateServiceStatus(serviceName, 'critical', responseTime, this.getErrorMessage(error));
     }
   }
 
@@ -316,7 +328,7 @@ export class TorMonitoringService extends EventEmitter {
 
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      this.updateServiceStatus(serviceName, 'critical', responseTime, error.message);
+      this.updateServiceStatus(serviceName, 'critical', responseTime, this.getErrorMessage(error));
     }
   }
 
@@ -339,7 +351,7 @@ export class TorMonitoringService extends EventEmitter {
         onionAddress = onionAddress.trim();
         service.onionAddress = onionAddress;
       } catch (error) {
-        throw new Error(`Не удалось прочитать hostname: ${error.message}`);
+        throw new Error(`Не удалось прочитать hostname: ${this.getErrorMessage(error)}`);
       }
 
       // Проверяем доступность через внешние средства (если возможно)
@@ -348,7 +360,7 @@ export class TorMonitoringService extends EventEmitter {
 
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      this.updateServiceStatus(serviceName, 'warning', responseTime, error.message);
+      this.updateServiceStatus(serviceName, 'warning', responseTime, this.getErrorMessage(error));
     }
   }
 
@@ -386,7 +398,7 @@ export class TorMonitoringService extends EventEmitter {
 
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      this.updateServiceStatus(serviceName, 'critical', responseTime, error.message);
+      this.updateServiceStatus(serviceName, 'critical', responseTime, this.getErrorMessage(error));
     }
   }
 
@@ -420,9 +432,10 @@ export class TorMonitoringService extends EventEmitter {
           service.details.onionResponseTime = responseTime;
 
         } catch (error) {
-          logger.warn(`⚠️ ${serviceName} onion недоступен:`, error.message);
+          const errorMessage = this.getErrorMessage(error);
+          logger.warn(`⚠️ ${serviceName} onion недоступен:`, errorMessage);
           service.details.onionConnectivity = 'inaccessible';
-          service.details.lastOnionError = error.message;
+          service.details.lastOnionError = errorMessage;
         }
       }
     }
@@ -508,6 +521,11 @@ export class TorMonitoringService extends EventEmitter {
     const uptimeMs = Date.now() - this.startTime.getTime();
     this.stats.hiddenServiceUptime = uptimeMs / 1000; // в секундах
 
+    // Обновляем статистику успешных и неудачных запросов
+    this.stats.successfulRequests = healthyServices.length;
+    this.stats.failedRequests = criticalServices.length;
+    this.stats.totalRequests = services.length;
+
     // Если производительность плохая
     if (avgResponseTime > 10000) { // Более 10 секунд
       this.emit('alert', {
@@ -523,6 +541,8 @@ export class TorMonitoringService extends EventEmitter {
         level: 'critical',
         message: `Много неработающих сервисов: ${criticalServices.length}/${services.length}`,
         service: 'overall_health',
+        healthyServices: healthyServices.length,
+        totalServices: services.length
       });
     }
   }
@@ -582,6 +602,15 @@ export class TorMonitoringService extends EventEmitter {
     }
 
     this.stats.services = services;
+    
+    // Логируем статистику для мониторинга
+    logger.debug('📊 Обновлена статистика сервисов', {
+      totalServices: services.length,
+      healthyServices: healthyCount,
+      warningServices: warningCount,
+      criticalServices: criticalCount,
+      overallHealth: this.stats.overallHealth
+    });
   }
 
   /**

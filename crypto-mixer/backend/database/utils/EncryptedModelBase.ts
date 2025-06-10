@@ -1,4 +1,4 @@
-import { Model, DataTypes, Sequelize, ModelStatic, Optional } from 'sequelize';
+import { Model, DataTypes } from 'sequelize';
 import { DataEncryptionManager, SensitiveDataType, EncryptedData } from './DataEncryption';
 
 /**
@@ -96,19 +96,23 @@ export abstract class EncryptedModelBase<TModelAttributes extends Record<string,
    * Настройка хуков модели для автоматического шифрования/расшифровки
    */
   static setupEncryptionHooks(): void {
+    const ModelClass = this as any;
+    
     // Хук перед сохранением - шифруем данные
-    this.addHook('beforeSave', async (instance: any) => {
-      await instance.encryptSensitiveFields();
+    ModelClass.addHook('beforeSave', async (instance: any) => {
+      if (instance.encryptSensitiveFields) {
+        await instance.encryptSensitiveFields();
+      }
     });
 
     // Хук после загрузки - расшифровываем данные (если настроено)
-    this.addHook('afterFind', async (instances: any) => {
+    ModelClass.addHook('afterFind', async (instances: any) => {
       if (!instances) return;
       
       const models = Array.isArray(instances) ? instances : [instances];
       
       for (const instance of models) {
-        if (instance instanceof this) {
+        if (instance && instance.decryptSensitiveFields) {
           await instance.decryptSensitiveFields();
         }
       }
@@ -146,12 +150,12 @@ export abstract class EncryptedModelBase<TModelAttributes extends Record<string,
    */
   async setEncryptedField(fieldName: string, value: any): Promise<void> {
     if (value === null || value === undefined) {
-      this.setDataValue(`${fieldName}_encrypted` as keyof TModelAttributes, null);
+      this.setDataValue(`${fieldName}_encrypted` as keyof TModelAttributes, null as any);
       return;
     }
 
     const encryptedData = await this.encryptField(fieldName, value);
-    this.setDataValue(`${fieldName}_encrypted` as keyof TModelAttributes, encryptedData);
+    this.setDataValue(`${fieldName}_encrypted` as keyof TModelAttributes, encryptedData as any);
   }
 
   /**
@@ -198,7 +202,7 @@ export abstract class EncryptedModelBase<TModelAttributes extends Record<string,
         try {
           const decryptedValue = await this.decryptField(fieldName);
           // Кэшируем расшифрованное значение
-          this.dataValues[`_decrypted_${fieldName}`] = decryptedValue;
+          (this.dataValues as any)[`_decrypted_${fieldName}`] = decryptedValue;
         } catch (error) {
           console.error(`❌ Failed to decrypt field ${fieldName}:`, error);
           // Продолжаем выполнение, но поле остается null
@@ -251,10 +255,10 @@ export abstract class EncryptedModelBase<TModelAttributes extends Record<string,
       if (encryptedData) {
         try {
           const reencryptedData = await encryptionManager.reencryptData(encryptedData, newKeyVersion);
-          this.setDataValue(`${fieldName}_encrypted`, reencryptedData);
+          this.setDataValue(`${fieldName}_encrypted`, reencryptedData as any);
           
           // Очищаем кэш
-          delete this.dataValues[`_decrypted_${fieldName}`];
+          delete (this.dataValues as any)[`_decrypted_${fieldName}`];
           
         } catch (error) {
           console.error(`❌ Failed to re-encrypt field ${fieldName}:`, error);
@@ -299,7 +303,7 @@ export abstract class EncryptedModelBase<TModelAttributes extends Record<string,
     return {
       totalFields: fieldNames.length,
       encryptedFields: encryptedCount,
-      keyVersions: [...new Set(keyVersions)],
+      keyVersions: Array.from(new Set(keyVersions)),
       lastEncrypted
     };
   }
@@ -355,7 +359,7 @@ export abstract class EncryptedModelBase<TModelAttributes extends Record<string,
  * Хелпер функция для создания модели с поддержкой шифрования
  */
 export function createEncryptedModel<T extends typeof Model>(
-  BaseModel: T,
+  _BaseModel: T,
   encryptedFields: EncryptedFieldsMetadata,
   encryptionManager?: DataEncryptionManager
 ): T {

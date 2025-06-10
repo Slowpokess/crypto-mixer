@@ -66,6 +66,22 @@ export interface SecurityEvent {
         confidence?: number;
     };
 }
+interface SecurityStats {
+    totalRequests: number;
+    blockedRequests: number;
+    rateLimitedRequests: number;
+    ddosAttacksDetected: number;
+    attacksMitigated: number;
+    emergencyModeActivations: number;
+    topAttackingIPs: Map<string, number>;
+    attackTypes: Map<string, number>;
+}
+interface EmergencyModeStatus {
+    active: boolean;
+    activatedAt: Date | null;
+    reason: string;
+    level: number;
+}
 /**
  * RUSSIAN: Главный класс системы безопасности
  */
@@ -135,10 +151,10 @@ export declare class SecurityMiddleware {
      * RUSSIAN: Получение статистики безопасности
      */
     getSecurityStatistics(): {
-        general: typeof this.securityStats;
+        general: SecurityStats;
         rateLimiter: any;
         ddosProtection: any;
-        emergencyMode: typeof this.emergencyMode;
+        emergencyMode: EmergencyModeStatus;
     };
     /**
      * RUSSIAN: Получение последних событий безопасности
@@ -165,3 +181,4 @@ export declare function createSecurityMiddleware(config?: Partial<SecurityConfig
  * RUSSIAN: Хелпер для интеграции с Express приложением
  */
 export declare function setupSecurity(app: Express, config?: Partial<SecurityConfig>): SecurityMiddleware;
+export {};

@@ -278,7 +278,9 @@ export class MonitoringSystem extends EventEmitter {
     } catch (error) {
       this.isRunning = false;
       await enhancedDbLogger.endOperation(operationId, false);
-      await enhancedDbLogger.logError(error);
+      // Правильная типизация error для логгера
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      await enhancedDbLogger.logError(errorToLog);
       throw error;
     }
   }
@@ -419,8 +421,8 @@ export class MonitoringSystem extends EventEmitter {
       });
 
       await this.prometheusExporter.start(
-        this.performanceMonitor,
-        this.healthCheckManager
+        this.performanceMonitor || undefined,
+        this.healthCheckManager || undefined
       );
 
       enhancedDbLogger.info('✅ Prometheus Exporter запущен', {
@@ -575,14 +577,27 @@ export class MonitoringSystem extends EventEmitter {
 
   /**
    * Определение уровня важности по пороговому значению
+   * Учитывает тип метрики для более точной классификации
    */
   private getSeverityByThreshold(type: string, value: number, threshold: number): 'low' | 'medium' | 'high' | 'critical' {
     const ratio = value / threshold;
     
-    if (ratio >= 1.5) return 'critical';
-    if (ratio >= 1.2) return 'high';
-    if (ratio >= 1.0) return 'medium';
-    return 'low';
+    // Для критически важных метрик (CPU, memory) применяем более строгие критерии
+    const isCriticalMetric = ['cpu', 'memory', 'disk'].includes(type.toLowerCase());
+    
+    if (isCriticalMetric) {
+      // Более строгие пороги для критических метрик
+      if (ratio >= 1.3) return 'critical';
+      if (ratio >= 1.1) return 'high';
+      if (ratio >= 1.0) return 'medium';
+      return 'low';
+    } else {
+      // Стандартные пороги для остальных метрик
+      if (ratio >= 1.5) return 'critical';
+      if (ratio >= 1.2) return 'high';
+      if (ratio >= 1.0) return 'medium';
+      return 'low';
+    }
   }
 
   /**
@@ -676,11 +691,15 @@ export class MonitoringSystem extends EventEmitter {
       performanceMonitor: boolean;
       healthCheckManager: boolean;
       prometheusExporter: boolean;
+      alertManager: boolean;
+      notificationManager: boolean;
     };
     metrics: {
       lastPerformanceSnapshot: any;
       systemHealth: any;
       prometheusUrl: string | null;
+      activeAlerts: number;
+      alertStatistics: any;
     };
   } {
     return {

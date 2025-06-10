@@ -1,5 +1,5 @@
-import winston from 'winston';
-import path from 'path';
+import * as winston from 'winston';
+import * as path from 'path';
 import { ErrorHandler, initializeErrorHandler } from './errors/ErrorHandler';
 import { AuditLogger, initializeAuditLogger, AuditEventType, AuditSeverity } from './logging/AuditLogger';
 import { BaseError } from './errors/ErrorTypes';

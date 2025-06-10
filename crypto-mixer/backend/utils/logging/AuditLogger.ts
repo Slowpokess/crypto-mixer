@@ -10,8 +10,8 @@
  * - Автоматическая ротация и архивация логов
  */
 
-import winston from 'winston';
-import crypto from 'crypto';
+import * as winston from 'winston';
+import * as crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { BaseError, ErrorSeverity } from '../errors/ErrorTypes';
 

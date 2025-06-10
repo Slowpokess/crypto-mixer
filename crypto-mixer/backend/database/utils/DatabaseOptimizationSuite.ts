@@ -84,16 +84,16 @@ export interface SystemHealthStatus {
  * Комплексная система оптимизации базы данных
  */
 export class DatabaseOptimizationSuite extends EventEmitter {
-  private sequelize: Sequelize;
+  private sequelize!: Sequelize; // Инициализируется в initializeSystem
   private config: DatabaseOptimizationConfig;
   
   // Компоненты системы
-  private connectionPoolManager: ConnectionPoolManager;
-  private queryBuilder: OptimizedQueryBuilder;
+  private connectionPoolManager!: ConnectionPoolManager; // Инициализируется в initializeSystem
+  private queryBuilder!: OptimizedQueryBuilder; // Инициализируется в initializeSystem
   private redisQueryBuilder?: RedisOptimizedQueryBuilder;
   private redisMaster?: RedisMasterManager;
-  private recoveryManager: DataRecoveryManager;
-  private backupManager: BackupManager;
+  private recoveryManager!: DataRecoveryManager; // Инициализируется в initializeSystem
+  private backupManager!: BackupManager; // Инициализируется в initializeSystem
   private performanceMonitor?: PerformanceMonitor;
   
   // Статус и мониторинг
@@ -358,7 +358,7 @@ export class DatabaseOptimizationSuite extends EventEmitter {
 
     // Recovery Manager events
     this.recoveryManager.on('integrity_check_completed', (report) => {
-      const criticalIssues = report.issues.filter(i => i.severity === 'CRITICAL').length;
+      const criticalIssues = report.issues.filter((i: any) => i.severity === 'CRITICAL').length;
       
       if (criticalIssues > this.config.alertThresholds.criticalIssuesCount) {
         this.healthStatus.components.dataIntegrity = 'CRITICAL';
@@ -576,7 +576,7 @@ export class DatabaseOptimizationSuite extends EventEmitter {
       
       // Создаем backup перед очисткой если нужно
       if (this.config.recovery.createRecoveryBackups) {
-        await this.backupManager.createBackup('scheduled_cleanup_' + Date.now());
+        await this.backupManager.createFullBackup('scheduled_cleanup_' + Date.now());
       }
 
       enhancedDbLogger.info('✅ Scheduled cleanup завершен');

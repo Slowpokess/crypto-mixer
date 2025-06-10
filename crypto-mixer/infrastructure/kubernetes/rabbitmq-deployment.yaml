@@ -1,0 +1,423 @@
+# RabbitMQ Deployment для Crypto Mixer
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  namespace: crypto-mixer
+  labels:
+    app: rabbitmq
+    tier: messaging
+spec:
+  serviceName: rabbitmq-service
+  replicas: 3  # Кластер для высокой доступности
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+        tier: messaging
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "15692"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: rabbitmq
+        image: rabbitmq:3.12-management-alpine
+        ports:
+        - containerPort: 5672
+          name: amqp
+        - containerPort: 15672
+          name: management
+        - containerPort: 15692
+          name: metrics
+        - containerPort: 25672
+          name: clustering
+        env:
+        - name: RABBITMQ_DEFAULT_USER
+          valueFrom:
+            secretKeyRef:
+              name: mixer-secrets
+              key: RABBITMQ_USER
+        - name: RABBITMQ_DEFAULT_PASS
+          valueFrom:
+            secretKeyRef:
+              name: mixer-secrets
+              key: RABBITMQ_PASSWORD
+        - name: RABBITMQ_ERLANG_COOKIE
+          valueFrom:
+            secretKeyRef:
+              name: rabbitmq-cluster-secret
+              key: RABBITMQ_ERLANG_COOKIE
+        - name: RABBITMQ_USE_LONGNAME
+          value: "true"
+        - name: RABBITMQ_NODENAME
+          value: "rabbit@$(hostname -f)"
+        - name: K8S_SERVICE_NAME
+          value: "rabbitmq-service"
+        - name: RABBITMQ_CLUSTER_FORMATION_TYPE
+          value: "k8s"
+        - name: RABBITMQ_CLUSTER_K8S_SERVICE_NAME
+          value: "rabbitmq-service"
+        - name: RABBITMQ_CLUSTER_K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        # Настройки производительности
+        - name: RABBITMQ_VM_MEMORY_HIGH_WATERMARK
+          value: "0.8"
+        - name: RABBITMQ_DISK_FREE_LIMIT
+          value: "2GB"
+        # Настройки для крипто-миксера
+        - name: RABBITMQ_DEFAULT_VHOST
+          value: "crypto-mixer"
+        volumeMounts:
+        - name: rabbitmq-data
+          mountPath: /var/lib/rabbitmq
+        - name: rabbitmq-config
+          mountPath: /etc/rabbitmq/rabbitmq.conf
+          subPath: rabbitmq.conf
+        - name: rabbitmq-definitions
+          mountPath: /etc/rabbitmq/definitions.json
+          subPath: definitions.json
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2"
+        livenessProbe:
+          exec:
+            command:
+            - rabbitmq-diagnostics
+            - status
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 15
+        readinessProbe:
+          exec:
+            command:
+            - rabbitmq-diagnostics
+            - ping
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 10
+        # Безопасность
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          allowPrivilegeEscalation: false
+      volumes:
+      - name: rabbitmq-config
+        configMap:
+          name: rabbitmq-config
+      - name: rabbitmq-definitions
+        configMap:
+          name: rabbitmq-definitions
+      # Стратегия размещения подов
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - rabbitmq
+            topologyKey: kubernetes.io/hostname
+      serviceAccountName: rabbitmq-service-account
+  volumeClaimTemplates:
+  - metadata:
+      name: rabbitmq-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 20Gi
+
+---
+# RabbitMQ Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq-service
+  namespace: crypto-mixer
+  labels:
+    app: rabbitmq
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+  - name: amqp
+    port: 5672
+    targetPort: 5672
+  - name: management
+    port: 15672
+    targetPort: 15672
+  - name: metrics
+    port: 15692
+    targetPort: 15692
+  - name: clustering
+    port: 25672
+    targetPort: 25672
+  type: ClusterIP
+  clusterIP: None  # Headless service для StatefulSet
+
+---
+# RabbitMQ Management Service (отдельный для веб-интерфейса)
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq-management-service
+  namespace: crypto-mixer
+  labels:
+    app: rabbitmq
+    component: management
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+  - name: management
+    port: 15672
+    targetPort: 15672
+  type: ClusterIP
+
+---
+# RabbitMQ ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rabbitmq-config
+  namespace: crypto-mixer
+  labels:
+    app: rabbitmq
+data:
+  rabbitmq.conf: |
+    # Кластеризация
+    cluster_formation.peer_discovery_backend = rabbit_peer_discovery_k8s
+    cluster_formation.k8s.host = kubernetes.default.svc.cluster.local
+    cluster_formation.k8s.address_type = hostname
+    cluster_formation.node_cleanup.interval = 30
+    cluster_formation.node_cleanup.only_log_warning = true
+    cluster_partition_handling = autoheal
+    
+    # Производительность
+    vm_memory_high_watermark.relative = 0.8
+    disk_free_limit.absolute = 2GB
+    
+    # Сеть
+    tcp_listen_options.backlog = 128
+    tcp_listen_options.nodelay = true
+    tcp_listen_options.linger.on = true
+    tcp_listen_options.linger.timeout = 0
+    
+    # Логирование
+    log.console = true
+    log.console.level = info
+    log.file = false
+    
+    # Management plugin
+    management.tcp.port = 15672
+    management.tcp.ip = 0.0.0.0
+    management.load_definitions = /etc/rabbitmq/definitions.json
+    
+    # Prometheus metrics
+    prometheus.tcp.port = 15692
+    prometheus.tcp.ip = 0.0.0.0
+    
+    # Security
+    loopback_users = none
+    default_vhost = crypto-mixer
+    
+    # Queue settings для crypto-mixer
+    queue_master_locator = min-masters
+
+---
+# RabbitMQ Definitions (очереди, exchanges и т.д.)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rabbitmq-definitions
+  namespace: crypto-mixer
+  labels:
+    app: rabbitmq
+data:
+  definitions.json: |
+    {
+      "vhosts": [
+        {
+          "name": "crypto-mixer"
+        }
+      ],
+      "permissions": [
+        {
+          "user": "mixer_user",
+          "vhost": "crypto-mixer",
+          "configure": ".*",
+          "write": ".*",
+          "read": ".*"
+        }
+      ],
+      "exchanges": [
+        {
+          "name": "mixing.exchange",
+          "vhost": "crypto-mixer",
+          "type": "topic",
+          "durable": true,
+          "auto_delete": false
+        },
+        {
+          "name": "blockchain.exchange",
+          "vhost": "crypto-mixer",
+          "type": "topic",
+          "durable": true,
+          "auto_delete": false
+        },
+        {
+          "name": "notifications.exchange",
+          "vhost": "crypto-mixer",
+          "type": "topic",
+          "durable": true,
+          "auto_delete": false
+        }
+      ],
+      "queues": [
+        {
+          "name": "mixing.requests",
+          "vhost": "crypto-mixer",
+          "durable": true,
+          "auto_delete": false,
+          "arguments": {
+            "x-message-ttl": 3600000,
+            "x-max-length": 10000
+          }
+        },
+        {
+          "name": "blockchain.transactions",
+          "vhost": "crypto-mixer",
+          "durable": true,
+          "auto_delete": false,
+          "arguments": {
+            "x-message-ttl": 7200000,
+            "x-max-length": 50000
+          }
+        },
+        {
+          "name": "wallet.operations",
+          "vhost": "crypto-mixer",
+          "durable": true,
+          "auto_delete": false,
+          "arguments": {
+            "x-message-ttl": 1800000,
+            "x-max-length": 5000
+          }
+        },
+        {
+          "name": "notifications.alerts",
+          "vhost": "crypto-mixer",
+          "durable": true,
+          "auto_delete": false,
+          "arguments": {
+            "x-message-ttl": 86400000,
+            "x-max-length": 1000
+          }
+        }
+      ],
+      "bindings": [
+        {
+          "source": "mixing.exchange",
+          "vhost": "crypto-mixer",
+          "destination": "mixing.requests",
+          "destination_type": "queue",
+          "routing_key": "mixing.*"
+        },
+        {
+          "source": "blockchain.exchange",
+          "vhost": "crypto-mixer",
+          "destination": "blockchain.transactions",
+          "destination_type": "queue",
+          "routing_key": "blockchain.*"
+        },
+        {
+          "source": "mixing.exchange",
+          "vhost": "crypto-mixer",
+          "destination": "wallet.operations",
+          "destination_type": "queue",
+          "routing_key": "wallet.*"
+        },
+        {
+          "source": "notifications.exchange",
+          "vhost": "crypto-mixer",
+          "destination": "notifications.alerts",
+          "destination_type": "queue",
+          "routing_key": "alert.*"
+        }
+      ]
+    }
+
+---
+# RabbitMQ Cluster Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rabbitmq-cluster-secret
+  namespace: crypto-mixer
+  labels:
+    app: rabbitmq
+type: Opaque
+stringData:
+  RABBITMQ_ERLANG_COOKIE: "CHANGE_ME_RANDOM_32_CHAR_COOKIE_STRING"
+
+---
+# ServiceAccount для RabbitMQ
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rabbitmq-service-account
+  namespace: crypto-mixer
+  labels:
+    app: rabbitmq
+
+---
+# Role для RabbitMQ (нужен для kubernetes peer discovery)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rabbitmq-role
+  namespace: crypto-mixer
+rules:
+- apiGroups: [""]
+  resources: ["endpoints"]
+  verbs: ["get"]
+
+---
+# RoleBinding для RabbitMQ
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rabbitmq-role-binding
+  namespace: crypto-mixer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rabbitmq-role
+subjects:
+- kind: ServiceAccount
+  name: rabbitmq-service-account
+  namespace: crypto-mixer
+
+---
+# PodDisruptionBudget для RabbitMQ
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rabbitmq-pdb
+  namespace: crypto-mixer
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: rabbitmq

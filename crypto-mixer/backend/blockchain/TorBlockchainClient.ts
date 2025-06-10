@@ -2,7 +2,9 @@ import { AxiosInstance } from 'axios';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { EventEmitter } from 'events';
 import { torManager } from '../utils/TorManager';
-import { logger } from '../utils/logger';
+import logger from '../utils/logger';
+// Импорт расширения типов для axios metadata
+import '../types/axios-metadata';
 
 /**
  * Tor Blockchain Client для анонимных запросов к блокчейн сетям
@@ -38,7 +40,7 @@ export interface CryptocurrencyConfig {
 export class TorBlockchainClient extends EventEmitter {
   private currencies: Map<string, CryptocurrencyConfig> = new Map();
   private axiosInstances: Map<string, AxiosInstance> = new Map();
-  private rotationTimers: Map<string, NodeJS.Timer> = new Map();
+  private rotationTimers: Map<string, NodeJS.Timeout> = new Map();
   private endpointStats: Map<string, any> = new Map();
   private isInitialized = false;
 
@@ -349,10 +351,10 @@ export class TorBlockchainClient extends EventEmitter {
     axiosInstance.interceptors.response.use(
       (response) => {
         const endTime = Date.now();
-        const responseTime = endTime - response.config.metadata.startTime;
+        const responseTime = endTime - (response.config.metadata?.startTime || endTime);
         
         // Обновляем статистику endpoint'а
-        this.updateEndpointStats(symbol, response.config.url, responseTime, true);
+        this.updateEndpointStats(symbol, response.config.url || '', responseTime, true);
         
         logger.debug(`✅ ${symbol} ответ:`, { 
           status: response.status, 
@@ -523,7 +525,7 @@ export class TorBlockchainClient extends EventEmitter {
     }
 
     const config = this.currencies.get(symbol);
-    let lastError: Error;
+    let lastError: Error | null = null;
     
     // Пытаемся выполнить запрос с retry logic
     for (let attempt = 1; attempt <= (config?.maxRetries || 3); attempt++) {
@@ -545,11 +547,11 @@ export class TorBlockchainClient extends EventEmitter {
 
         return response.data;
 
-      } catch (error) {
+      } catch (error: any) {
         lastError = error;
         logger.warn(`⚠️ ${symbol} запрос неудачен (попытка ${attempt}):`, { 
           endpoint, 
-          error: error.message,
+          error: error?.message || 'Unknown error',
           attempt 
         });
 
@@ -561,14 +563,14 @@ export class TorBlockchainClient extends EventEmitter {
       }
     }
 
-    throw lastError;
+    throw lastError || new Error('All attempts failed');
   }
 
   /**
    * Получение статистики по всем валютам
    */
-  public getStats() {
-    const stats = {};
+  public getStats(): Record<string, any> {
+    const stats: Record<string, any> = {};
     
     for (const [symbol, config] of this.currencies) {
       const currencyStats = {
@@ -597,8 +599,8 @@ export class TorBlockchainClient extends EventEmitter {
   /**
    * Проверка здоровья всех соединений
    */
-  public async healthCheck(): Promise<any> {
-    const results = {};
+  public async healthCheck(): Promise<Record<string, any>> {
+    const results: Record<string, any> = {};
 
     for (const [symbol] of this.currencies) {
       try {
@@ -619,10 +621,10 @@ export class TorBlockchainClient extends EventEmitter {
             error: 'Нет доступных endpoints',
           };
         }
-      } catch (error) {
+      } catch (error: any) {
         results[symbol] = {
           status: 'unhealthy',
-          error: error.message,
+          error: error?.message || 'Unknown error',
         };
       }
     }

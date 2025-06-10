@@ -21,6 +21,7 @@ import { MixerAPI } from '../services/mixerAPI';
 import CurrencySelector from './CurrencySelector';
 import OutputConfiguration from './OutputConfiguration';
 import MixingStatus from './MixingStatus';
+import TorStatusIndicator from './TorStatusIndicator';
 import { validateOutputAddresses, validateAmount } from '../utils/validation';
 import { SUPPORTED_CURRENCIES, APP_CONFIG } from '../config/constants';
 import { themeHelpers } from '../theme/theme';
@@ -430,6 +431,9 @@ const CryptoMixer = () => {
             </Typography>
           </Box>
         </Backdrop>
+
+        {/* Tor Status Indicator */}
+        <TorStatusIndicator position="bottom-right" showDetails={true} />
       </Container>
     </Fade>
   );

@@ -44,7 +44,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
       this.validateData(data);
       
       // Оптимизированная проверка существования адреса
-      const [existsResult] = await this.sequelize.query(`
+      const [existsResult] = await this.model.sequelize!.query(`
         SELECT EXISTS(SELECT 1 FROM wallets WHERE address = :address) as exists
       `, {
         replacements: { address: data.address },
@@ -56,7 +56,11 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
         throw new DatabaseError(
           `Wallet with address ${data.address} already exists`,
           ErrorCode.CONSTRAINT_VIOLATION,
-          { address: data.address }
+          { 
+            component: 'OptimizedWalletRepository',
+            operation: 'createWallet',
+            additionalInfo: { address: data.address }
+          }
         );
       }
 
@@ -79,7 +83,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
       this.handleError('createWallet', error);
-      throw error;
+      // handleError уже выбросит ошибку, этот код недостижим был бы
     }
   }
 
@@ -103,7 +107,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
       this.handleError('findByAddress', error);
-      throw error;
+      // handleError уже выбросит ошибку, этот код недостижим был бы
     }
   }
 
@@ -136,7 +140,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
       this.handleError('getStatistics', error);
-      throw error;
+      // handleError уже выбросит ошибку, этот код недостижим был бы
     }
   }
 
@@ -174,7 +178,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
       this.handleError('findWithSufficientBalance', error);
-      throw error;
+      // handleError уже выбросит ошибку, этот код недостижим был бы
     }
   }
 
@@ -209,10 +213,12 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
         WHERE id IN (${ids})
       `;
 
-      const [results] = await this.sequelize.query(query, {
+      const [results] = await this.model.sequelize!.query(query, {
         type: QueryTypes.UPDATE,
         transaction
       });
+
+      const affectedRows = Number(results || 0);
 
       // Очищаем кэш балансов для обновленных кошельков
       updates.forEach(update => {
@@ -225,14 +231,14 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
       await enhancedDbLogger.endOperation(operationId, true);
       this.log('batchUpdateBalances', { 
         updateCount: updates.length,
-        affectedRows: results 
+        affectedRows: affectedRows 
       });
       
-      return results;
+      return affectedRows;
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
       this.handleError('batchUpdateBalances', error);
-      throw error;
+      // handleError уже выбросит ошибку, этот код недостижим был бы
     }
   }
 
@@ -251,7 +257,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
       }
 
       // Получаем только баланс, без загрузки всей записи
-      const [result] = await this.sequelize.query(`
+      const [result] = await this.model.sequelize!.query(`
         SELECT balance FROM wallets WHERE id = :id
       `, {
         replacements: { id },
@@ -262,7 +268,11 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
         throw new DatabaseError(
           `Wallet with ID ${id} not found`,
           ErrorCode.CONSTRAINT_VIOLATION,
-          { walletId: id }
+          { 
+            component: 'OptimizedWalletRepository',
+            operation: 'getBalance',
+            additionalInfo: { walletId: id }
+          }
         );
       }
 
@@ -279,7 +289,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
       this.handleError('getBalance', error);
-      throw error;
+      // handleError уже выбросит ошибку, этот код недостижим был бы
     }
   }
 
@@ -311,7 +321,11 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
         throw new DatabaseError(
           `Wallet with ID ${id} not found`,
           ErrorCode.CONSTRAINT_VIOLATION,
-          { walletId: id }
+          { 
+            component: 'OptimizedWalletRepository',
+            operation: 'updateBalance',
+            additionalInfo: { walletId: id }
+          }
         );
       }
 
@@ -336,7 +350,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
       this.handleError('updateBalance', error);
-      throw error;
+      // handleError уже выбросит ошибку, этот код недостижим был бы
     }
   }
 
@@ -352,7 +366,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     
     try {
       // Атомарная операция UPDATE с проверкой баланса
-      const [results] = await this.sequelize.query(`
+      const [results] = await this.model.sequelize!.query(`
         UPDATE wallets 
         SET 
           balance = balance - :amount,
@@ -399,7 +413,13 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
       return { success: true, newBalance };
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
-      this.handleError('atomicSubtractBalance', error);
+      // Специальный случай: не вызываем handleError(), так как метод должен вернуть результат, а не выбросить ошибку
+      this.log('atomicSubtractBalance', { 
+        id, 
+        amount, 
+        success: false,
+        error: (error as Error).message 
+      });
       return { success: false, error: (error as Error).message };
     }
   }
@@ -415,7 +435,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     
     try {
       // Оптимизированный запрос с использованием индексов
-      const [result] = await this.sequelize.query(`
+      const [result] = await this.model.sequelize!.query(`
         SELECT w.*
         FROM wallets w
         WHERE w.currency = :currency
@@ -447,7 +467,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
       this.handleError('findOptimalForWithdrawal', error);
-      throw error;
+      // handleError уже выбросит ошибку, этот код недостижим был бы
     }
   }
 
@@ -466,7 +486,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     const operationId = await enhancedDbLogger.startOperation('getCurrencyAggregates');
     
     try {
-      const [result] = await this.sequelize.query(`
+      const [result] = await this.model.sequelize!.query(`
         SELECT 
           COUNT(*) as total_wallets,
           SUM(CASE WHEN is_active = true THEN 1 ELSE 0 END) as active_wallets,
@@ -500,7 +520,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
       this.handleError('getCurrencyAggregates', error);
-      throw error;
+      // handleError уже выбросит ошибку, этот код недостижим был бы
     }
   }
 
@@ -523,7 +543,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
 
       // Проверяем уникальность адресов одним запросом
       const addresses = data.map(item => item.address);
-      const [existingAddresses] = await this.sequelize.query(`
+      const [existingAddresses] = await this.model.sequelize!.query(`
         SELECT address FROM wallets WHERE address IN (:addresses)
       `, {
         replacements: { addresses },
@@ -536,7 +556,11 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
         throw new DatabaseError(
           `Wallets already exist for addresses: ${existing.join(', ')}`,
           ErrorCode.CONSTRAINT_VIOLATION,
-          { existingAddresses: existing }
+          { 
+            component: 'OptimizedWalletRepository',
+            operation: 'bulkCreateWallets',
+            additionalInfo: { existingAddresses: existing }
+          }
         );
       }
 
@@ -562,7 +586,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
       this.handleError('bulkCreateWallets', error);
-      throw error;
+      // handleError уже выбросит ошибку, этот код недостижим был бы
     }
   }
 
@@ -581,7 +605,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
 
       // Обновляем порциями
       while (true) {
-        const [results] = await this.sequelize.query(`
+        const [results] = await this.model.sequelize!.query(`
           UPDATE wallets 
           SET 
             is_active = false,
@@ -621,7 +645,7 @@ export class OptimizedWalletRepository extends BaseRepository<Wallet> {
     } catch (error) {
       await enhancedDbLogger.endOperation(operationId, false);
       this.handleError('archiveInactive', error);
-      throw error;
+      // handleError уже выбросит ошибку, этот код недостижим был бы
     }
   }
 

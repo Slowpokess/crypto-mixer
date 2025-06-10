@@ -198,7 +198,13 @@ class SecurityMonitoring extends events_1.EventEmitter {
             description: alertData.description || '',
             timestamp: new Date(),
             source: alertData.source || 'security_monitoring',
-            metrics: alertData.metrics || {},
+            metrics: alertData.metrics || {
+                rps: 0,
+                blockedIPs: 0,
+                errorRate: 0,
+                responseTime: 0,
+                uniqueIPs: 0
+            },
             status: 'new',
             attackDetails: alertData.attackDetails
         };
@@ -605,10 +611,10 @@ class SecurityMonitoring extends events_1.EventEmitter {
     async shutdown() {
         logger_1.enhancedDbLogger.info('🛑 Остановка системы мониторинга безопасности...');
         // RUSSIAN: Останавливаем все интервалы
-        for (const [name, interval] of this.intervals.entries()) {
+        this.intervals.forEach((interval, name) => {
             clearInterval(interval);
             logger_1.enhancedDbLogger.debug(`Остановлен интервал: ${name}`);
-        }
+        });
         this.intervals.clear();
         this.isActive = false;
         logger_1.enhancedDbLogger.info('✅ Система мониторинга остановлена');

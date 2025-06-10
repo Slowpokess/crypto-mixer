@@ -494,7 +494,7 @@ export class AdvancedDDoSProtection extends EventEmitter {
     const geoDistribution = this.analyzeGeographicDistribution(requests);
     
     // RUSSIAN: Слишком много запросов из одной страны может быть подозрительно
-    const maxCountryPercentage = Math.max(...Object.values(geoDistribution));
+    const maxCountryPercentage = Math.max(...Object.values(geoDistribution).map(val => Number(val) || 0));
     if (maxCountryPercentage > 0.9 && requests.length > 100) {
       await this.triggerAttackDetection('geographic_anomaly', 'low', ['single_country_dominance']);
     }
@@ -679,7 +679,7 @@ export class AdvancedDDoSProtection extends EventEmitter {
 
     // RUSSIAN: Ограничиваем размер окна (последние 10000 запросов)
     if (this.currentWindow.size > 10000) {
-      const oldestKey = this.currentWindow.keys().next().value;
+      const oldestKey = this.currentWindow.keys().next().value as string;
       this.currentWindow.delete(oldestKey);
     }
   }

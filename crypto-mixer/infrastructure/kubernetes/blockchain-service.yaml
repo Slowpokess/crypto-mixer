@@ -74,6 +74,26 @@ spec:
       - name: blockchain-keys
         secret:
           secretName: blockchain-keys
+          defaultMode: 0400
+      # Безопасность и управление размещением
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      serviceAccountName: blockchain-service-account
+      # Размещение подов на разных нодах
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - blockchain-service
+              topologyKey: kubernetes.io/hostname
 
 ---
 # Blockchain Service
@@ -119,3 +139,69 @@ data:
   ethereum.key: ""
   solana.key: ""
   tron.key: ""
+
+---
+# Blockchain Service HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: blockchain-service-hpa
+  namespace: crypto-mixer
+  labels:
+    app: blockchain-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: blockchain-service
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+
+---
+# PodDisruptionBudget для Blockchain Service
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: blockchain-service-pdb
+  namespace: crypto-mixer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: blockchain-service
+
+---
+# ServiceAccount для Blockchain Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: blockchain-service-account
+  namespace: crypto-mixer
+  labels:
+    app: blockchain-service

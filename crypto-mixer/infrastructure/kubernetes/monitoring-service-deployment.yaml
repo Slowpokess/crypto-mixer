@@ -1,0 +1,289 @@
+# Monitoring Service Deployment для Crypto Mixer
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring-service
+  namespace: crypto-mixer
+  labels:
+    app: monitoring-service
+    tier: monitoring
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: monitoring-service
+  template:
+    metadata:
+      labels:
+        app: monitoring-service
+        tier: monitoring
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3004"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: monitoring-service
+        image: crypto-mixer/monitoring-service:latest
+        ports:
+        - containerPort: 3004
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: mixer-config
+        - secretRef:
+            name: mixer-secrets
+        env:
+        - name: PORT
+          value: "3004"
+        - name: METRICS_PORT
+          value: "9090"
+        - name: SERVICE_NAME
+          value: "monitoring-service"
+        - name: PROMETHEUS_URL
+          value: "http://prometheus-service:9090"
+        - name: GRAFANA_URL
+          value: "http://grafana-service:3000"
+        - name: ALERTMANAGER_URL
+          value: "http://alertmanager-service:9093"
+        # Настройки уведомлений
+        - name: SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: SLACK_WEBHOOK_URL
+              optional: true
+        - name: DISCORD_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: DISCORD_WEBHOOK_URL
+              optional: true
+        - name: TELEGRAM_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: TELEGRAM_BOT_TOKEN
+              optional: true
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1"
+        # Health Checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3004
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3004
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        # Безопасность контейнера
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1003
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        # Монтирование временных файлов
+        volumeMounts:
+        - name: tmp-volume
+          mountPath: /tmp
+        - name: monitoring-config
+          mountPath: /app/config
+          readOnly: true
+      volumes:
+      - name: tmp-volume
+        emptyDir:
+          sizeLimit: 500Mi
+      - name: monitoring-config
+        configMap:
+          name: monitoring-config
+      # Стратегия обновления
+      strategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 1
+          maxUnavailable: 0
+      serviceAccountName: monitoring-service-account
+
+---
+# Monitoring Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring-service
+  namespace: crypto-mixer
+  labels:
+    app: monitoring-service
+spec:
+  selector:
+    app: monitoring-service
+  ports:
+  - name: http
+    port: 3004
+    targetPort: 3004
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  type: ClusterIP
+
+---
+# Monitoring Service ServiceAccount с расширенными правами
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: monitoring-service-account
+  namespace: crypto-mixer
+  labels:
+    app: monitoring-service
+
+---
+# ClusterRole для мониторинга
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: monitoring-service-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "nodes", "namespaces"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: monitoring-service-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: monitoring-service-role
+subjects:
+- kind: ServiceAccount
+  name: monitoring-service-account
+  namespace: crypto-mixer
+
+---
+# Monitoring Service HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: monitoring-service-hpa
+  namespace: crypto-mixer
+  labels:
+    app: monitoring-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: monitoring-service
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 75
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 180
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+
+---
+# Monitoring Config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-config
+  namespace: crypto-mixer
+data:
+  monitoring.yaml: |
+    monitoring:
+      enabled: true
+      interval: 30s
+      retention: 30d
+      
+    alerts:
+      cpu_threshold: 80
+      memory_threshold: 85
+      disk_threshold: 90
+      response_time_threshold: 2000ms
+      error_rate_threshold: 5%
+      
+    notifications:
+      enabled: true
+      channels:
+        - slack
+        - email
+        - telegram
+      
+    metrics:
+      custom_metrics: true
+      business_metrics: true
+      security_metrics: true
+      
+    dashboards:
+      auto_create: true
+      templates:
+        - crypto-mixer-overview
+        - services-health
+        - security-dashboard
+        - business-metrics
+
+---
+# PodDisruptionBudget для Monitoring Service
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: monitoring-service-pdb
+  namespace: crypto-mixer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: monitoring-service

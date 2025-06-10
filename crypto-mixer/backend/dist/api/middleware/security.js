@@ -136,9 +136,10 @@ const inputSanitization = (req, res, next) => {
                 content: JSON.stringify(target.data),
                 timestamp: new Date().toISOString()
             });
-            return res.status(400).json({
+            res.status(400).json({
                 error: 'Invalid input detected'
             });
+            return;
         }
     }
     next();

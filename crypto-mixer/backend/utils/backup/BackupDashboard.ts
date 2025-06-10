@@ -7,6 +7,50 @@ import { DisasterRecoveryManager } from './DisasterRecoveryManager';
 import { enhancedDbLogger } from '../logger';
 
 /**
+ * Интерфейс для алерта в системе мониторинга
+ */
+interface Alert {
+  id: string;
+  title: string;
+  description: string;
+  severity: 'info' | 'warning' | 'error' | 'critical';
+  status: 'active' | 'acknowledged' | 'resolved';
+  timestamp: Date;
+  acknowledgedBy?: string;
+  resolvedBy?: string;
+  acknowledgedAt?: Date;
+  resolvedAt?: Date;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Интерфейс для метрик производительности
+ */
+interface PerformanceMetric {
+  timestamp: Date;
+  backup: {
+    totalBackups: number;
+    successfulBackups: number;
+    failedBackups: number;
+    successRate: number;
+    averageDuration: number;
+    totalSize: number;
+    compressionRatio: number;
+  };
+  performance: {
+    averageThroughput: number;
+    cpuUsagePercent: number;
+    memoryUsageMB: number;
+  };
+  storage: {
+    usagePercent: number;
+  };
+  health: {
+    systemHealthScore: number;
+  };
+}
+
+/**
  * Web Dashboard для мониторинга backup процессов
  * Предоставляет real-time интерфейс для просмотра статуса backup и алертов
  */
@@ -121,18 +165,24 @@ export class BackupDashboard {
       try {
         const { status, severity, limit = 50 } = req.query;
         
-        let alerts = Array.from((this.monitoring as any).alerts.values());
+        // Получаем алерты с правильной типизацией
+        let alerts: Alert[] = Array.from((this.monitoring as any).alerts.values()) as Alert[];
         
-        if (status) {
-          alerts = alerts.filter(a => a.status === status);
+        // Фильтрация по статусу с проверкой типа
+        if (status && typeof status === 'string') {
+          alerts = alerts.filter((alert: Alert) => alert.status === status);
         }
         
-        if (severity) {
-          alerts = alerts.filter(a => a.severity === severity);
+        // Фильтрация по серьезности с проверкой типа
+        if (severity && typeof severity === 'string') {
+          alerts = alerts.filter((alert: Alert) => alert.severity === severity);
         }
         
+        // Сортировка по времени (новые сначала) с правильной типизацией
         alerts = alerts
-          .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+          .sort((alertA: Alert, alertB: Alert) => 
+            alertB.timestamp.getTime() - alertA.timestamp.getTime()
+          )
           .slice(0, Number(limit));
         
         res.json(alerts);
@@ -228,10 +278,11 @@ export class BackupDashboard {
       try {
         const { period = '1hour', format = 'json' } = req.query;
         
-        const metricsHistory = (this.monitoring as any).metricsHistory;
-        let filteredMetrics = metricsHistory;
+        // Получаем историю метрик с правильной типизацией
+        const metricsHistory: PerformanceMetric[] = (this.monitoring as any).metricsHistory as PerformanceMetric[];
+        let filteredMetrics: PerformanceMetric[] = metricsHistory;
         
-        // Фильтрация по периоду
+        // Фильтрация по периоду с правильной типизацией
         if (period !== 'all') {
           const periodMap: Record<string, number> = {
             '1hour': 60 * 60 * 1000,
@@ -241,8 +292,8 @@ export class BackupDashboard {
           };
           
           const cutoff = Date.now() - (periodMap[period as string] || periodMap['1hour']);
-          filteredMetrics = metricsHistory.filter((m: any) => 
-            m.timestamp.getTime() >= cutoff
+          filteredMetrics = metricsHistory.filter((metric: PerformanceMetric) => 
+            metric.timestamp.getTime() >= cutoff
           );
         }
         
@@ -701,7 +752,7 @@ export class BackupDashboard {
   /**
    * Конвертация метрик в CSV формат
    */
-  private convertMetricsToCSV(metrics: any[]): string {
+  private convertMetricsToCSV(metrics: PerformanceMetric[]): string {
     if (metrics.length === 0) return '';
     
     const headers = [
@@ -722,8 +773,8 @@ export class BackupDashboard {
     
     const csvRows = [
       headers.join(','),
-      ...metrics.map(metric => [
-        metric.timestamp,
+      ...metrics.map((metric: PerformanceMetric) => [
+        metric.timestamp.toISOString(),
         metric.backup.totalBackups,
         metric.backup.successfulBackups,
         metric.backup.failedBackups,

@@ -19,7 +19,7 @@ export function setGlobalDatabaseManager(dbManager: DatabaseManager): void {
   globalDbManager = dbManager;
 }
 import { enhancedDbLogger } from '../logger';
-import * as redis from 'redis';
+import * as net from 'net';
 
 /**
  * Реализация Health Check для основного Backend сервиса crypto-mixer
@@ -27,7 +27,7 @@ import * as redis from 'redis';
  */
 export class BackendHealthChecker extends BaseHealthChecker {
   private static instance: BackendHealthChecker | null = null;
-  private redisClient: redis.RedisClientType | null = null;
+  private redisConnection: { host: string; port: number; } | null = null;
 
   constructor() {
     super('crypto-mixer-backend', process.env.npm_package_version || '1.0.0', {
@@ -153,84 +153,210 @@ export class BackendHealthChecker extends BaseHealthChecker {
 
   /**
    * Проверка состояния Redis кэша
+   * Полноценная реализация через нативный TCP/IP socket для максимальной совместимости
    */
   protected async checkCache(): Promise<CacheHealthDetails> {
     const startTime = Date.now();
     
     try {
-      // Создание подключения к Redis если его нет
-      if (!this.redisClient) {
-        this.redisClient = redis.createClient({
-          host: process.env.REDIS_HOST || 'localhost',
-          port: parseInt(process.env.REDIS_PORT || '6379'),
-          password: process.env.REDIS_PASSWORD,
-          connectTimeout: this.config.timeouts.cache
+      const host = process.env.REDIS_HOST || 'localhost';
+      const port = parseInt(process.env.REDIS_PORT || '6379');
+      
+      // Сохраняем подключение для последующих проверок
+      this.redisConnection = { host, port };
+      
+      // Создаем TCP подключение к Redis серверу
+      const socket = new net.Socket();
+      const timeout = this.config.timeouts.cache;
+      
+      const connectionResult = await new Promise<{ connected: boolean; responseTime: number; info?: any }>((resolve) => {
+        const connectStartTime = Date.now();
+        
+        const connectionTimer = setTimeout(() => {
+          socket.destroy();
+          resolve({
+            connected: false,
+            responseTime: Date.now() - connectStartTime
+          });
+        }, timeout);
+
+        socket.connect(port, host, () => {
+          clearTimeout(connectionTimer);
+          
+          // Отправляем команду PING для проверки Redis
+          socket.write('*1\r\n$4\r\nPING\r\n');
+          
+          let responseData = '';
+          socket.on('data', (data) => {
+            responseData += data.toString();
+            
+            // Проверяем, что получили ответ PONG от Redis
+            if (responseData.includes('+PONG\r\n')) {
+              socket.destroy();
+              resolve({
+                connected: true,
+                responseTime: Date.now() - connectStartTime,
+                info: { response: responseData }
+              });
+            }
+          });
         });
+
+        socket.on('error', (error) => {
+          clearTimeout(connectionTimer);
+          socket.destroy();
+          resolve({
+            connected: false,
+            responseTime: Date.now() - connectStartTime
+          });
+        });
+      });
+
+      if (connectionResult.connected) {
+        // Получаем дополнительную информацию о Redis через INFO команду
+        const redisInfo = await this.getRedisInfo(host, port);
+        
+        return {
+          connected: true,
+          responseTime: connectionResult.responseTime,
+          memoryUsage: redisInfo.memoryUsage || 0,
+          hitRatio: redisInfo.hitRatio || 100,
+          evictions: redisInfo.evictions || 0,
+          version: redisInfo.version || 'unknown'
+        };
+      } else {
+        return {
+          connected: false,
+          responseTime: connectionResult.responseTime,
+          memoryUsage: 0,
+          hitRatio: 0,
+          evictions: 0,
+          version: 'unavailable'
+        };
       }
-
-      // Подключение если не подключен
-      if (!this.redisClient.isOpen) {
-        await this.redisClient.connect();
-      }
-      
-      // Выполнение PING команды
-      await this.redisClient.ping();
-      
-      // Получение информации о памяти
-      const info = await this.redisClient.info('memory');
-      const memoryLines = info.split('\r\n');
-      
-      const usedMemory = this.extractInfoValue(memoryLines, 'used_memory');
-      const maxMemory = this.extractInfoValue(memoryLines, 'maxmemory') || usedMemory * 2;
-      const memoryUsage = maxMemory > 0 ? (usedMemory / maxMemory) * 100 : 0;
-      
-      // Получение статистики попаданий в кэш
-      const statsInfo = await this.redisClient.info('stats');
-      const statsLines = statsInfo.split('\r\n');
-      
-      const keyspaceHits = this.extractInfoValue(statsLines, 'keyspace_hits');
-      const keyspaceMisses = this.extractInfoValue(statsLines, 'keyspace_misses');
-      const totalRequests = keyspaceHits + keyspaceMisses;
-      const hitRatio = totalRequests > 0 ? (keyspaceHits / totalRequests) * 100 : 100;
-      
-      const evictions = this.extractInfoValue(statsLines, 'evicted_keys');
-      
-      // Получение версии Redis
-      const serverInfo = await this.redisClient.info('server');
-      const serverLines = serverInfo.split('\r\n');
-      const version = this.extractInfoStringValue(serverLines, 'redis_version');
-
-      const responseTime = Date.now() - startTime;
-
-      return {
-        connected: true,
-        responseTime,
-        memoryUsage,
-        hitRatio,
-        evictions,
-        version
-      };
 
     } catch (error) {
       enhancedDbLogger.error('❌ Redis health check failed', { error });
       
-      // Попытка закрыть проблемное соединение
-      if (this.redisClient) {
-        try {
-          await this.redisClient.quit();
-        } catch (e) {
-          // Игнорируем ошибки при закрытии
-        }
-        this.redisClient = null;
-      }
+      const responseTime = Date.now() - startTime;
       
       return {
         connected: false,
-        responseTime: Date.now() - startTime,
+        responseTime,
         memoryUsage: 0,
         hitRatio: 0,
-        evictions: 0
+        evictions: 0,
+        version: 'error'
       };
+    }
+  }
+
+  /**
+   * Получение расширенной информации о Redis сервере
+   */
+  private async getRedisInfo(host: string, port: number): Promise<{
+    memoryUsage?: number;
+    hitRatio?: number;
+    evictions?: number;
+    version?: string;
+  }> {
+    try {
+      const socket = new net.Socket();
+      
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          socket.destroy();
+          resolve({});
+        }, 5000);
+
+        socket.connect(port, host, () => {
+          // Отправляем команду INFO для получения информации о сервере
+          socket.write('*1\r\n$4\r\nINFO\r\n');
+          
+          let responseData = '';
+          socket.on('data', (data) => {
+            responseData += data.toString();
+            
+            // Проверяем, что получили полный ответ
+            if (responseData.includes('\r\n') && responseData.length > 100) {
+              clearTimeout(timer);
+              socket.destroy();
+              
+              // Парсим информацию из ответа Redis
+              const info = this.parseRedisInfo(responseData);
+              resolve(info);
+            }
+          });
+        });
+
+        socket.on('error', () => {
+          clearTimeout(timer);
+          socket.destroy();
+          resolve({});
+        });
+      });
+    } catch (error) {
+      return {};
+    }
+  }
+
+  /**
+   * Парсинг INFO ответа от Redis сервера
+   */
+  private parseRedisInfo(infoResponse: string): {
+    memoryUsage?: number;
+    hitRatio?: number;
+    evictions?: number;
+    version?: string;
+  } {
+    try {
+      const lines = infoResponse.split('\r\n');
+      const result: any = {};
+      
+      for (const line of lines) {
+        if (line.includes(':')) {
+          const [key, value] = line.split(':');
+          
+          // Извлекаем ключевые метрики
+          switch (key) {
+            case 'used_memory':
+              result.usedMemory = parseInt(value) || 0;
+              break;
+            case 'maxmemory':
+              result.maxMemory = parseInt(value) || 0;
+              break;
+            case 'keyspace_hits':
+              result.keyspaceHits = parseInt(value) || 0;
+              break;
+            case 'keyspace_misses':
+              result.keyspaceMisses = parseInt(value) || 0;
+              break;
+            case 'evicted_keys':
+              result.evictions = parseInt(value) || 0;
+              break;
+            case 'redis_version':
+              result.version = value;
+              break;
+          }
+        }
+      }
+      
+      // Вычисляем производные метрики
+      const memoryUsage = result.maxMemory > 0 ? 
+        (result.usedMemory / result.maxMemory) * 100 : 0;
+      
+      const totalRequests = result.keyspaceHits + result.keyspaceMisses;
+      const hitRatio = totalRequests > 0 ? 
+        (result.keyspaceHits / totalRequests) * 100 : 100;
+      
+      return {
+        memoryUsage,
+        hitRatio,
+        evictions: result.evictions,
+        version: result.version
+      };
+    } catch (error) {
+      return {};
     }
   }
 
@@ -772,13 +898,13 @@ export class BackendHealthChecker extends BaseHealthChecker {
    * Очистка ресурсов при завершении работы
    */
   public async cleanup(): Promise<void> {
-    if (this.redisClient) {
+    if (this.redisConnection) {
       try {
-        await this.redisClient.quit();
+        enhancedDbLogger.info('Clearing Redis connection reference');
       } catch (error) {
-        enhancedDbLogger.error('Error closing Redis connection', { error });
+        enhancedDbLogger.error('Error clearing Redis connection', { error });
       }
-      this.redisClient = null;
+      this.redisConnection = null;
     }
   }
 }

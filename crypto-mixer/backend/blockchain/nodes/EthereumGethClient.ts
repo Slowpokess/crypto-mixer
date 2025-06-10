@@ -3,6 +3,71 @@ import axios, { AxiosInstance } from 'axios';
 import logger from '../../utils/logger';
 
 /**
+ * Вспомогательные функции для конвертации типов Web3.js
+ */
+class TypeConverter {
+  /**
+   * Конвертация bigint в number с проверкой безопасности
+   */
+  static bigintToNumber(value: bigint | number | string): number {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') return parseInt(value, 10);
+    
+    // Проверяем, что bigint не превышает максимальный безопасный integer
+    if (value > Number.MAX_SAFE_INTEGER) {
+      throw new Error(`BigInt value ${value} exceeds MAX_SAFE_INTEGER`);
+    }
+    return Number(value);
+  }
+
+  /**
+   * Конвертация bigint в string
+   */
+  static bigintToString(value: bigint | number | string): string {
+    if (typeof value === 'string') return value;
+    return value.toString();
+  }
+
+  /**
+   * Конвертация Web3 Numbers в boolean для статуса
+   */
+  static numberToBoolean(value: any): boolean {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'bigint') return value !== 0n;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') return value !== '0' && value !== '';
+    return Boolean(value);
+  }
+
+  /**
+   * Конвертация Web3 Bytes в string
+   */
+  static bytesToString(value: any): string {
+    if (typeof value === 'string') return value;
+    if (value && typeof value.toString === 'function') return value.toString();
+    return String(value || '');
+  }
+
+  /**
+   * Конвертация undefined в null для совместимости
+   */
+  static undefinedToNull<T>(value: T | undefined): T | null {
+    return value === undefined ? null : value;
+  }
+
+  /**
+   * Безопасное преобразование любого значения в string
+   */
+  static safeToString(value: any): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'bigint') return value.toString();
+    if (value && typeof value.toString === 'function') return value.toString();
+    return String(value);
+  }
+}
+
+/**
  * Интерфейсы для Ethereum/Geth
  */
 interface EthereumTransaction {
@@ -20,6 +85,12 @@ interface EthereumTransaction {
   r: string;
   s: string;
   v: string;
+  // Дополнительные поля для совместимости с Web3.js
+  type?: string;
+  accessList?: any[];
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+  yParity?: string;
 }
 
 interface EthereumBlock {
@@ -42,6 +113,10 @@ interface EthereumBlock {
   timestamp: number;
   transactions: string[] | EthereumTransaction[];
   uncles: string[];
+  // Дополнительные поля для совместимости
+  baseFeePerGas?: string;
+  withdrawals?: any[];
+  withdrawalsRoot?: string;
 }
 
 interface TransactionReceipt {
@@ -58,6 +133,9 @@ interface TransactionReceipt {
   logsBloom: string;
   status: boolean;
   effectiveGasPrice: string;
+  // Дополнительные поля
+  type?: string;
+  root?: string;
 }
 
 interface EthereumSyncStatus {
@@ -306,14 +384,16 @@ export class EthereumGethClient {
    * Получение номера последнего блока
    */
   async getBlockNumber(): Promise<number> {
-    return await this.web3.eth.getBlockNumber();
+    const blockNumber = await this.web3.eth.getBlockNumber();
+    return TypeConverter.bigintToNumber(blockNumber);
   }
 
   /**
    * Получение баланса адреса
    */
   async getBalance(address: string, blockNumber: 'latest' | 'pending' | 'earliest' | number = 'latest'): Promise<string> {
-    return await this.web3.eth.getBalance(address, blockNumber);
+    const balance = await this.web3.eth.getBalance(address, blockNumber);
+    return TypeConverter.bigintToString(balance);
   }
 
   /**
@@ -328,50 +408,174 @@ export class EthereumGethClient {
    * Получение nonce для адреса
    */
   async getTransactionCount(address: string, blockNumber: 'latest' | 'pending' | 'earliest' | number = 'latest'): Promise<number> {
-    return await this.web3.eth.getTransactionCount(address, blockNumber);
+    const count = await this.web3.eth.getTransactionCount(address, blockNumber);
+    return TypeConverter.bigintToNumber(count);
   }
 
   /**
    * Получение цены газа
    */
   async getGasPrice(): Promise<string> {
-    return await this.web3.eth.getGasPrice();
+    const gasPrice = await this.web3.eth.getGasPrice();
+    return TypeConverter.bigintToString(gasPrice);
   }
 
   /**
    * Оценка газа для транзакции
    */
   async estimateGas(transaction: any): Promise<number> {
-    return await this.web3.eth.estimateGas(transaction);
+    const gasEstimate = await this.web3.eth.estimateGas(transaction);
+    return TypeConverter.bigintToNumber(gasEstimate);
   }
 
   /**
    * Получение блока по номеру или хешу
    */
   async getBlock(blockHashOrNumber: string | number, includeTransactions: boolean = false): Promise<EthereumBlock> {
-    return await this.web3.eth.getBlock(blockHashOrNumber, includeTransactions) as EthereumBlock;
+    const rawBlock = await this.web3.eth.getBlock(blockHashOrNumber, includeTransactions);
+    
+    // Преобразуем bigint поля в нужные типы
+    const block: EthereumBlock = {
+      number: TypeConverter.bigintToNumber(rawBlock.number || 0),
+      hash: rawBlock.hash || '',
+      parentHash: rawBlock.parentHash || '',
+      nonce: TypeConverter.safeToString(rawBlock.nonce || ''),
+      sha3Uncles: rawBlock.sha3Uncles || '',
+      logsBloom: rawBlock.logsBloom || '',
+      transactionsRoot: rawBlock.transactionsRoot || '',
+      stateRoot: rawBlock.stateRoot || '',
+      receiptsRoot: rawBlock.receiptsRoot || '',
+      miner: rawBlock.miner || '',
+      difficulty: TypeConverter.safeToString(rawBlock.difficulty || 0),
+      totalDifficulty: TypeConverter.safeToString(rawBlock.totalDifficulty || 0),
+      extraData: TypeConverter.safeToString(rawBlock.extraData || ''),
+      size: TypeConverter.bigintToNumber(rawBlock.size || 0),
+      gasLimit: TypeConverter.bigintToNumber(rawBlock.gasLimit || 0),
+      gasUsed: TypeConverter.bigintToNumber(rawBlock.gasUsed || 0),
+      timestamp: TypeConverter.bigintToNumber(rawBlock.timestamp || 0),
+      transactions: Array.isArray(rawBlock.transactions) ? (rawBlock.transactions.map((tx: any): string | EthereumTransaction => {
+        if (typeof tx === 'string') return tx;
+        return {
+          hash: tx.hash,
+          nonce: TypeConverter.bigintToNumber(tx.nonce || 0),
+          blockHash: tx.blockHash,
+          blockNumber: tx.blockNumber ? TypeConverter.bigintToNumber(tx.blockNumber) : null,
+          transactionIndex: tx.transactionIndex ? TypeConverter.bigintToNumber(tx.transactionIndex) : null,
+          from: tx.from,
+          to: TypeConverter.undefinedToNull(tx.to),
+          value: TypeConverter.safeToString(tx.value || 0),
+          gasPrice: TypeConverter.safeToString(tx.gasPrice || 0),
+          gas: TypeConverter.bigintToNumber(tx.gas || 0),
+          input: TypeConverter.safeToString(tx.input || ''),
+          r: TypeConverter.safeToString(tx.r || ''),
+          s: TypeConverter.safeToString(tx.s || ''),
+          v: TypeConverter.safeToString(tx.v || ''),
+          type: tx.type ? TypeConverter.safeToString(tx.type) : undefined,
+          accessList: tx.accessList || undefined,
+          maxFeePerGas: tx.maxFeePerGas ? TypeConverter.safeToString(tx.maxFeePerGas) : undefined,
+          maxPriorityFeePerGas: tx.maxPriorityFeePerGas ? TypeConverter.safeToString(tx.maxPriorityFeePerGas) : undefined,
+          yParity: tx.yParity || undefined
+        } as EthereumTransaction;
+      }) as string[] | EthereumTransaction[]) : [],
+      uncles: rawBlock.uncles || [],
+      baseFeePerGas: rawBlock.baseFeePerGas ? TypeConverter.safeToString(rawBlock.baseFeePerGas) : undefined,
+      withdrawals: (rawBlock as any).withdrawals || undefined,
+      withdrawalsRoot: (rawBlock as any).withdrawalsRoot || undefined
+    };
+    
+    return block;
   }
 
   /**
    * Получение транзакции по хешу
    */
   async getTransaction(transactionHash: string): Promise<EthereumTransaction | null> {
-    return await this.web3.eth.getTransaction(transactionHash) as EthereumTransaction | null;
+    const rawTx = await this.web3.eth.getTransaction(transactionHash);
+    
+    if (!rawTx) return null;
+    
+    // Преобразуем транзакцию с правильными типами
+    const transaction: EthereumTransaction = {
+      hash: rawTx.hash,
+      nonce: TypeConverter.bigintToNumber((rawTx as any).nonce || 0),
+      blockHash: TypeConverter.undefinedToNull(rawTx.blockHash),
+      blockNumber: rawTx.blockNumber ? TypeConverter.bigintToNumber(rawTx.blockNumber) : null,
+      transactionIndex: rawTx.transactionIndex ? TypeConverter.bigintToNumber(rawTx.transactionIndex) : null,
+      from: rawTx.from,
+      to: TypeConverter.undefinedToNull(rawTx.to),
+      value: TypeConverter.bigintToString(rawTx.value || 0),
+      gasPrice: TypeConverter.bigintToString((rawTx as any).gasPrice || 0),
+      gas: TypeConverter.bigintToNumber(rawTx.gas || 0),
+      input: TypeConverter.bytesToString(rawTx.input || ''),
+      r: TypeConverter.bytesToString(rawTx.r || ''),
+      s: TypeConverter.bytesToString(rawTx.s || ''),
+      v: TypeConverter.bigintToString((rawTx as any).v || 0),
+      type: (rawTx as any).type ? TypeConverter.bigintToString((rawTx as any).type) : undefined,
+      accessList: (rawTx as any).accessList || undefined,
+      maxFeePerGas: (rawTx as any).maxFeePerGas ? TypeConverter.bigintToString((rawTx as any).maxFeePerGas) : undefined,
+      maxPriorityFeePerGas: (rawTx as any).maxPriorityFeePerGas ? TypeConverter.bigintToString((rawTx as any).maxPriorityFeePerGas) : undefined,
+      yParity: (rawTx as any).yParity || undefined
+    };
+    
+    return transaction;
   }
 
   /**
    * Получение квитанции транзакции
    */
   async getTransactionReceipt(transactionHash: string): Promise<TransactionReceipt | null> {
-    return await this.web3.eth.getTransactionReceipt(transactionHash) as TransactionReceipt | null;
+    const rawReceipt = await this.web3.eth.getTransactionReceipt(transactionHash);
+    
+    if (!rawReceipt) return null;
+    
+    // Преобразуем квитанцию с правильными типами
+    const receipt: TransactionReceipt = {
+      transactionHash: TypeConverter.bytesToString(rawReceipt.transactionHash),
+      transactionIndex: TypeConverter.bigintToNumber(rawReceipt.transactionIndex || 0),
+      blockHash: TypeConverter.bytesToString(rawReceipt.blockHash),
+      blockNumber: TypeConverter.bigintToNumber(rawReceipt.blockNumber || 0),
+      from: rawReceipt.from,
+      to: TypeConverter.undefinedToNull(rawReceipt.to),
+      cumulativeGasUsed: TypeConverter.bigintToNumber(rawReceipt.cumulativeGasUsed || 0),
+      gasUsed: TypeConverter.bigintToNumber(rawReceipt.gasUsed || 0),
+      contractAddress: TypeConverter.undefinedToNull(rawReceipt.contractAddress),
+      logs: rawReceipt.logs || [],
+      logsBloom: TypeConverter.bytesToString(rawReceipt.logsBloom || ''),
+      status: TypeConverter.numberToBoolean(rawReceipt.status),
+      effectiveGasPrice: TypeConverter.bigintToString((rawReceipt as any).effectiveGasPrice || 0),
+      type: (rawReceipt as any).type ? TypeConverter.bigintToString((rawReceipt as any).type) : undefined,
+      root: (rawReceipt as any).root || undefined
+    };
+    
+    return receipt;
   }
 
   /**
    * Отправка подписанной транзакции
    */
   async sendSignedTransaction(signedTransaction: string): Promise<TransactionReceipt> {
-    const receipt = await this.web3.eth.sendSignedTransaction(signedTransaction);
-    return receipt as TransactionReceipt;
+    const rawReceipt = await this.web3.eth.sendSignedTransaction(signedTransaction);
+    
+    // Преобразуем квитанцию с правильными типами
+    const receipt: TransactionReceipt = {
+      transactionHash: TypeConverter.bytesToString(rawReceipt.transactionHash),
+      transactionIndex: TypeConverter.bigintToNumber(rawReceipt.transactionIndex || 0),
+      blockHash: TypeConverter.bytesToString(rawReceipt.blockHash),
+      blockNumber: TypeConverter.bigintToNumber(rawReceipt.blockNumber || 0),
+      from: rawReceipt.from,
+      to: TypeConverter.undefinedToNull(rawReceipt.to),
+      cumulativeGasUsed: TypeConverter.bigintToNumber(rawReceipt.cumulativeGasUsed || 0),
+      gasUsed: TypeConverter.bigintToNumber(rawReceipt.gasUsed || 0),
+      contractAddress: TypeConverter.undefinedToNull(rawReceipt.contractAddress),
+      logs: rawReceipt.logs || [],
+      logsBloom: TypeConverter.bytesToString(rawReceipt.logsBloom || ''),
+      status: TypeConverter.numberToBoolean(rawReceipt.status),
+      effectiveGasPrice: TypeConverter.bigintToString((rawReceipt as any).effectiveGasPrice || 0),
+      type: (rawReceipt as any).type ? TypeConverter.bigintToString((rawReceipt as any).type) : undefined,
+      root: (rawReceipt as any).root || undefined
+    };
+    
+    return receipt;
   }
 
   /**
@@ -387,8 +591,28 @@ export class EthereumGethClient {
       data: data || '0x'
     };
 
-    const receipt = await this.web3.eth.sendTransaction(transaction);
-    return receipt as TransactionReceipt;
+    const rawReceipt = await this.web3.eth.sendTransaction(transaction);
+    
+    // Преобразуем квитанцию с правильными типами
+    const receipt: TransactionReceipt = {
+      transactionHash: TypeConverter.bytesToString(rawReceipt.transactionHash),
+      transactionIndex: TypeConverter.bigintToNumber(rawReceipt.transactionIndex || 0),
+      blockHash: TypeConverter.bytesToString(rawReceipt.blockHash),
+      blockNumber: TypeConverter.bigintToNumber(rawReceipt.blockNumber || 0),
+      from: rawReceipt.from,
+      to: TypeConverter.undefinedToNull(rawReceipt.to),
+      cumulativeGasUsed: TypeConverter.bigintToNumber(rawReceipt.cumulativeGasUsed || 0),
+      gasUsed: TypeConverter.bigintToNumber(rawReceipt.gasUsed || 0),
+      contractAddress: TypeConverter.undefinedToNull(rawReceipt.contractAddress),
+      logs: rawReceipt.logs || [],
+      logsBloom: TypeConverter.bytesToString(rawReceipt.logsBloom || ''),
+      status: TypeConverter.numberToBoolean(rawReceipt.status),
+      effectiveGasPrice: TypeConverter.bigintToString((rawReceipt as any).effectiveGasPrice || 0),
+      type: (rawReceipt as any).type ? TypeConverter.bigintToString((rawReceipt as any).type) : undefined,
+      root: (rawReceipt as any).root || undefined
+    };
+    
+    return receipt;
   }
 
   /**
@@ -534,7 +758,7 @@ export class EthereumGethClient {
       await (this.web3.currentProvider as any).disconnect();
     }
     
-    this.isConnected = false;
+    this._isConnected = false;
   }
 
   /**
@@ -586,13 +810,15 @@ export class EthereumGethClient {
    * Получение текущей сети
    */
   async getNetworkId(): Promise<number> {
-    return await this.web3.eth.net.getId();
+    const networkId = await this.web3.eth.net.getId();
+    return TypeConverter.bigintToNumber(networkId);
   }
 
   /**
    * Получение ID сети
    */
   async getChainId(): Promise<number> {
-    return await this.web3.eth.getChainId();
+    const chainId = await this.web3.eth.getChainId();
+    return TypeConverter.bigintToNumber(chainId);
   }
 }

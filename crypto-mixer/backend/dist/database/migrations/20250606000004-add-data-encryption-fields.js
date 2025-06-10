@@ -197,8 +197,8 @@ const up = async (queryInterface, Sequelize) => {
         ];
         for (const field of encryptionFields) {
             // Получаем количество записей для миграции
-            const [countResult] = await queryInterface.sequelize.query(`SELECT COUNT(*) as count FROM ${field.table}`, { type: queryInterface.sequelize.QueryTypes.SELECT });
-            const totalRecords = countResult.count || 0;
+            const countResults = await queryInterface.sequelize.query(`SELECT COUNT(*) as count FROM ${field.table}`, { type: sequelize_1.QueryTypes.SELECT });
+            const totalRecords = countResults[0]?.count || 0;
             await queryInterface.bulkInsert('encryption_metadata', [{
                     id: `${field.table}_${field.field}_${Date.now()}_${Math.random().toString(36).substring(2)}`,
                     table_name: field.table,

@@ -310,7 +310,7 @@ class AdvancedDDoSProtection extends events_1.EventEmitter {
         // RUSSIAN: Анализ географического распределения
         const geoDistribution = this.analyzeGeographicDistribution(requests);
         // RUSSIAN: Слишком много запросов из одной страны может быть подозрительно
-        const maxCountryPercentage = Math.max(...Object.values(geoDistribution));
+        const maxCountryPercentage = Math.max(...Object.values(geoDistribution).map(val => Number(val) || 0));
         if (maxCountryPercentage > 0.9 && requests.length > 100) {
             await this.triggerAttackDetection('geographic_anomaly', 'low', ['single_country_dominance']);
         }

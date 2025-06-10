@@ -63,7 +63,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         catch (error) {
             await logger_1.enhancedDbLogger.endOperation(operationId, false);
             this.handleError('createMixRequest', error);
-            throw error;
+            // handleError уже выбросит ошибку, этот код недостижим был бы
         }
     }
     /**
@@ -97,7 +97,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         catch (error) {
             await logger_1.enhancedDbLogger.endOperation(operationId, false);
             this.handleError('findByStatus', error);
-            throw error;
+            // handleError уже выбросит ошибку, этот код недостижим был бы
         }
     }
     /**
@@ -134,7 +134,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         catch (error) {
             await logger_1.enhancedDbLogger.endOperation(operationId, false);
             this.handleError('findActiveByCurrency', error);
-            throw error;
+            // handleError уже выбросит ошибку, этот код недостижим был бы
         }
     }
     /**
@@ -162,7 +162,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         catch (error) {
             await logger_1.enhancedDbLogger.endOperation(operationId, false);
             this.handleError('getStatistics', error);
-            throw error;
+            // handleError уже выбросит ошибку, этот код недостижим был бы
         }
     }
     /**
@@ -185,7 +185,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         catch (error) {
             await logger_1.enhancedDbLogger.endOperation(operationId, false);
             this.handleError('findWithFilters', error);
-            throw error;
+            // handleError уже выбросит ошибку, этот код недостижим был бы
         }
     }
     /**
@@ -233,7 +233,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         catch (error) {
             await logger_1.enhancedDbLogger.endOperation(operationId, false);
             this.handleError('getFullDetails', error);
-            throw error;
+            // handleError уже выбросит ошибку, этот код недостижим был бы
         }
     }
     /**
@@ -282,7 +282,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         catch (error) {
             await logger_1.enhancedDbLogger.endOperation(operationId, false);
             this.handleError('batchUpdateStatus', error);
-            throw error;
+            // handleError уже выбросит ошибку, этот код недостижим был бы
         }
     }
     /**
@@ -316,7 +316,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         catch (error) {
             await logger_1.enhancedDbLogger.endOperation(operationId, false);
             this.handleError('findReadyForProcessing', error);
-            throw error;
+            // handleError уже выбросит ошибку, этот код недостижим был бы
         }
     }
     /**
@@ -357,7 +357,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         catch (error) {
             await logger_1.enhancedDbLogger.endOperation(operationId, false);
             this.handleError('cleanupOldRequests', error);
-            throw error;
+            // handleError уже выбросит ошибку, этот код недостижим был бы
         }
     }
     /**
@@ -378,7 +378,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         catch (error) {
             await logger_1.enhancedDbLogger.endOperation(operationId, false);
             this.handleError('getQueryPerformanceMetrics', error);
-            throw error;
+            // handleError уже выбросит ошибку, этот код недостижим был бы
         }
     }
     /**
@@ -431,7 +431,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         catch (error) {
             await logger_1.enhancedDbLogger.endOperation(operationId, false);
             this.handleError('bulkCreateMixRequests', error);
-            throw error;
+            // handleError уже выбросит ошибку, этот код недостижим был бы
         }
     }
     /**
@@ -441,7 +441,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         const operationId = await logger_1.enhancedDbLogger.startOperation('getCurrencyAggregates');
         try {
             // Агрегация на уровне БД вместо загрузки записей в память
-            const [result] = await this.sequelize.query(`
+            const [result] = await this.model.sequelize.query(`
         SELECT 
           COUNT(*) as total_requests,
           SUM(input_amount) as total_amount,
@@ -473,7 +473,7 @@ class OptimizedMixRequestRepository extends BaseRepository_1.BaseRepository {
         catch (error) {
             await logger_1.enhancedDbLogger.endOperation(operationId, false);
             this.handleError('getCurrencyAggregates', error);
-            throw error;
+            // handleError уже выбросит ошибку, этот код недостижим был бы
         }
     }
     /**

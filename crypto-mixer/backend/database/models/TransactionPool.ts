@@ -413,7 +413,7 @@ export class TransactionPool extends Model<TransactionPoolAttributes, Transactio
    * Автоматическое создание пулов для валют
    */
   public static async createDefaultPools(): Promise<TransactionPool[]> {
-    const currencies: CurrencyType[] = ['BTC', 'ETH', 'USDT', 'SOL'];
+    const currencies: CurrencyType[] = ['BTC', 'ETH', 'USDT', 'SOL', 'LTC', 'DASH', 'ZEC'];
     const pools: TransactionPool[] = [];
 
     for (const currency of currencies) {
@@ -466,6 +466,30 @@ export class TransactionPool extends Model<TransactionPoolAttributes, Transactio
         maxParticipants: 20,
         minParticipants: 5,
         feePercentage: 0.4
+      },
+      LTC: {
+        minAmount: 0.01,
+        maxAmount: 100,
+        targetAmount: 300,
+        maxParticipants: 20,
+        minParticipants: 5,
+        feePercentage: 0.3 // Низкая комиссия, как у ETH
+      },
+      DASH: {
+        minAmount: 0.01,
+        maxAmount: 100,
+        targetAmount: 250,
+        maxParticipants: 18,
+        minParticipants: 4,
+        feePercentage: 0.25 // Еще ниже благодаря InstantSend
+      },
+      ZEC: {
+        minAmount: 0.001,
+        maxAmount: 50,
+        targetAmount: 150,
+        maxParticipants: 15,
+        minParticipants: 6, // Больше для лучшей анонимности с shielded транзакциями
+        feePercentage: 0.6 // Выше из-за дополнительной обработки privacy features
       }
     };
 
@@ -497,7 +521,7 @@ export function initTransactionPool(sequelize: Sequelize): typeof TransactionPoo
         allowNull: false
       },
       currency: {
-        type: DataTypes.ENUM('BTC', 'ETH', 'USDT', 'SOL'),
+        type: DataTypes.ENUM('BTC', 'ETH', 'USDT', 'SOL', 'LTC', 'DASH', 'ZEC'),
         allowNull: false
       },
       name: {

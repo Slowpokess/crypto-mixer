@@ -487,7 +487,9 @@ export class NotificationManager extends EventEmitter {
     } catch (error) {
       this.isRunning = false;
       await enhancedDbLogger.endOperation(operationId, false);
-      await enhancedDbLogger.logError(error);
+      // Правильная типизация error для логгера
+      const errorToLog = error instanceof Error ? error : new Error(String(error));
+      await enhancedDbLogger.logError(errorToLog);
       throw error;
     }
   }

@@ -9,7 +9,7 @@
  * - Audit trail для всех операций
  */
 
-import winston from 'winston';
+import * as winston from 'winston';
 import { EventEmitter } from 'events';
 import { 
   BaseError, 
